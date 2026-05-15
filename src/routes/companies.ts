@@ -14,11 +14,30 @@ const createCompany = z.object({
   hqLocation: z.string().optional()
 })
 
+const querySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+  offset: z.coerce.number().int().min(0).optional().default(0)
+})
+
 export const companiesRoutes = new Hono()
 
 companiesRoutes.get('/', async (c) => {
-  const rows = await db.select().from(companies).orderBy(desc(companies.createdAt))
-  return c.json(rows)
+  const parsed = querySchema.safeParse({
+    limit: c.req.query('limit') ?? undefined,
+    offset: c.req.query('offset') ?? undefined
+  })
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const { limit, offset } = parsed.data
+  const rows = await db
+    .select()
+    .from(companies)
+    .orderBy(desc(companies.createdAt))
+    .limit(limit)
+    .offset(offset)
+  return c.json({ data: rows, limit, offset })
 })
 
 companiesRoutes.post('/', async (c) => {

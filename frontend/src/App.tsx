@@ -40,6 +40,9 @@ import { Textarea } from '@/components/ui/textarea'
 
 type TabId = 'people' | 'companies' | 'crawls' | 'campaigns'
 type DetailSelection = { type: 'person'; id: string } | { type: 'company'; id: string }
+type PagedResponse<T> = { data: T[]; limit: number; offset: number }
+
+const PAGE_SIZE = 100
 
 const navItems: Array<{ id: TabId; label: string; description: string; icon: typeof Users }> = [
   {
@@ -74,6 +77,8 @@ export default function App() {
   const [companies, setCompanies] = useState<Company[]>([])
   const [people, setPeople] = useState<Person[]>([])
   const [detail, setDetail] = useState<DetailSelection | null>(null)
+  const [peopleHasMore, setPeopleHasMore] = useState(true)
+  const [companiesHasMore, setCompaniesHasMore] = useState(true)
   const [crawlsLoading, setCrawlsLoading] = useState(true)
   const [companiesLoading, setCompaniesLoading] = useState(true)
   const [peopleLoading, setPeopleLoading] = useState(false)
@@ -93,23 +98,25 @@ export default function App() {
     setCrawls(data)
   }, [])
 
-  const loadPeople = useCallback(async () => {
+  const loadPeople = useCallback(async (offset = 0) => {
     setPeopleLoading(true)
     setError(null)
     try {
-      const res = await apiGet<{ data: Person[] }>('/people?limit=200')
-      setPeople(res.data)
+      const res = await apiGet<PagedResponse<Person>>(`/people?limit=${PAGE_SIZE}&offset=${offset}`)
+      setPeople((current) => (offset === 0 ? res.data : [...current, ...res.data]))
+      setPeopleHasMore(res.data.length === PAGE_SIZE)
     } finally {
       setPeopleLoading(false)
     }
   }, [])
 
-  const loadCompanies = useCallback(async () => {
+  const loadCompanies = useCallback(async (offset = 0) => {
     setCompaniesLoading(true)
     setError(null)
     try {
-      const data = await apiGet<Company[]>('/companies')
-      setCompanies(data)
+      const res = await apiGet<PagedResponse<Company>>(`/companies?limit=${PAGE_SIZE}&offset=${offset}`)
+      setCompanies((current) => (offset === 0 ? res.data : [...current, ...res.data]))
+      setCompaniesHasMore(res.data.length === PAGE_SIZE)
     } finally {
       setCompaniesLoading(false)
     }
@@ -161,8 +168,8 @@ export default function App() {
     try {
       await apiPost<{ workflowTriggered: boolean }>('/campaigns/' + crawlId + '/runs')
       await loadCrawls()
-      await loadPeople()
-      await loadCompanies()
+      await loadPeople(0)
+      await loadCompanies(0)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Start crawl failed')
     } finally {
@@ -181,10 +188,22 @@ export default function App() {
       ? people.filter((person) => person.companyId === selectedPerson.companyId)
       : []
 
+  function loadMorePeople() {
+    if (!peopleLoading && peopleHasMore) {
+      void loadPeople(people.length)
+    }
+  }
+
+  function loadMoreCompanies() {
+    if (!companiesLoading && companiesHasMore) {
+      void loadCompanies(companies.length)
+    }
+  }
+
   return (
-    <div className="min-h-svh bg-muted/20 text-left">
-      <div className="grid min-h-svh md:grid-cols-[260px_1fr]">
-        <aside className="border-r bg-background p-4">
+    <div className="h-svh overflow-hidden bg-muted/20 text-left">
+      <div className="grid h-svh overflow-hidden md:grid-cols-[260px_1fr]">
+        <aside className="h-svh overflow-y-auto border-r bg-background p-4">
           <div className="mb-6 px-2">
             <h1 className="text-xl font-semibold tracking-tight">ICP Prospector</h1>
             <p className="text-muted-foreground mt-1 text-sm">
@@ -226,14 +245,14 @@ export default function App() {
           </nav>
         </aside>
 
-        <main className="mx-auto w-full max-w-6xl space-y-6 p-6">
-          <header>
+        <main className="flex h-svh min-w-0 flex-col overflow-hidden">
+          <header className="shrink-0 border-b bg-background p-6">
             <h2 className="text-2xl font-semibold tracking-tight">{activeNav.label}</h2>
             <p className="text-muted-foreground text-sm">{activeNav.description}</p>
           </header>
 
           {error ? (
-            <Card className="border-destructive/50 bg-destructive/5">
+            <Card className="m-6 shrink-0 border-destructive/50 bg-destructive/5">
               <CardHeader className="pb-2">
                 <CardTitle className="text-destructive text-base">Error</CardTitle>
                 <CardDescription className="text-destructive/90">{error}</CardDescription>
@@ -246,7 +265,9 @@ export default function App() {
               people={people}
               companyById={companyById}
               loading={peopleLoading}
-              onRefresh={() => void loadPeople()}
+              hasMore={peopleHasMore}
+              onRefresh={() => void loadPeople(0)}
+              onLoadMore={loadMorePeople}
               onSelectPerson={(person) => setDetail({ type: 'person', id: person.id })}
               onSelectCompany={(companyId) => setDetail({ type: 'company', id: companyId })}
             />
@@ -257,7 +278,9 @@ export default function App() {
               companies={companies}
               people={people}
               loading={companiesLoading}
-              onRefresh={() => void loadCompanies()}
+              hasMore={companiesHasMore}
+              onRefresh={() => void loadCompanies(0)}
+              onLoadMore={loadMoreCompanies}
               onSelectCompany={(company) => setDetail({ type: 'company', id: company.id })}
             />
           ) : null}
@@ -299,38 +322,42 @@ function PeoplePage({
   people,
   companyById,
   loading,
+  hasMore,
   onRefresh,
+  onLoadMore,
   onSelectPerson,
   onSelectCompany
 }: {
   people: Person[]
   companyById: Map<string, Company>
   loading: boolean
+  hasMore: boolean
   onRefresh: () => void
+  onLoadMore: () => void
   onSelectPerson: (person: Person) => void
   onSelectCompany: (companyId: string) => void
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+    <section className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="flex shrink-0 flex-row items-center justify-between border-b p-4">
         <div>
-          <CardTitle>People</CardTitle>
-          <CardDescription>Prospects discovered by crawls.</CardDescription>
+          <h3 className="font-semibold">People</h3>
+          <p className="text-muted-foreground text-sm">Prospects discovered by crawls.</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
         </Button>
-      </CardHeader>
-      <CardContent>
-        <Table>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto" onScroll={(event) => handleInfiniteScroll(event, onLoadMore)}>
+        <Table className="min-w-[980px]">
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Company</TableHead>
-              <TableHead>Title</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>LinkedIn</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">Name</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">Company</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">Title</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">Email</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">LinkedIn</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -387,8 +414,9 @@ function PeoplePage({
             )}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+        <TableFooterState loading={loading} hasMore={hasMore} />
+      </div>
+    </section>
   )
 }
 
@@ -396,35 +424,39 @@ function CompaniesPage({
   companies,
   people,
   loading,
+  hasMore,
   onRefresh,
+  onLoadMore,
   onSelectCompany
 }: {
   companies: Company[]
   people: Person[]
   loading: boolean
+  hasMore: boolean
   onRefresh: () => void
+  onLoadMore: () => void
   onSelectCompany: (company: Company) => void
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+    <section className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="flex shrink-0 flex-row items-center justify-between border-b p-4">
         <div>
-          <CardTitle>Companies</CardTitle>
-          <CardDescription>Accounts discovered during research.</CardDescription>
+          <h3 className="font-semibold">Companies</h3>
+          <p className="text-muted-foreground text-sm">Accounts discovered during research.</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
         </Button>
-      </CardHeader>
-      <CardContent>
-        <Table>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto" onScroll={(event) => handleInfiniteScroll(event, onLoadMore)}>
+        <Table className="min-w-[900px]">
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Domain</TableHead>
-              <TableHead>Industry</TableHead>
-              <TableHead>HQ</TableHead>
-              <TableHead>People</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">Name</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">Domain</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">Industry</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">HQ</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-background">People</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -467,8 +499,34 @@ function CompaniesPage({
             )}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+        <TableFooterState loading={loading} hasMore={hasMore} />
+      </div>
+    </section>
+  )
+}
+
+function handleInfiniteScroll(event: React.UIEvent<HTMLDivElement>, onLoadMore: () => void) {
+  const target = event.currentTarget
+  const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
+  if (distanceFromBottom < 240) {
+    onLoadMore()
+  }
+}
+
+function TableFooterState({ loading, hasMore }: { loading: boolean; hasMore: boolean }) {
+  return (
+    <div className="text-muted-foreground border-t bg-background p-3 text-center text-sm">
+      {loading ? (
+        <span className="inline-flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading...
+        </span>
+      ) : hasMore ? (
+        'Scroll for more'
+      ) : (
+        'End of results'
+      )}
+    </div>
   )
 }
 
@@ -502,8 +560,8 @@ function CrawlsPage({
   onRefresh: () => void
 }) {
   return (
-    <div className="space-y-6">
-      <Card>
+    <div className="h-full space-y-6 overflow-y-auto p-6">
+      <Card className="rounded-none">
         <CardHeader>
           <CardTitle>New crawl</CardTitle>
           <CardDescription>
@@ -556,7 +614,7 @@ function CrawlsPage({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="rounded-none">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
             <CardTitle>Crawls</CardTitle>
@@ -626,7 +684,7 @@ function CrawlsPage({
 
 function CampaignsPage() {
   return (
-    <Card>
+    <Card className="m-6 rounded-none">
       <CardHeader>
         <CardTitle>Email campaigns</CardTitle>
         <CardDescription>
