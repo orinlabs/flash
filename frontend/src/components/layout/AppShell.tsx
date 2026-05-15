@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import { Sidebar, type SidebarSection } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'
 
+type Theme = 'light' | 'dark'
+
 interface AppShellProps<TId extends string> {
   sections: SidebarSection<TId>[]
   activeId: TId
@@ -24,24 +26,35 @@ export function AppShell<TId extends string>({
   onSignOut,
   children
 }: AppShellProps<TId>) {
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+  const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === 'undefined') return 'light'
-    const saved = window.localStorage.getItem('theme')
-    if (saved === 'dark' || saved === 'light') return saved
-    return 'light'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   })
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+
+    function syncSystemTheme(event: MediaQueryList | MediaQueryListEvent) {
+      setTheme(event.matches ? 'dark' : 'light')
+    }
+
+    syncSystemTheme(media)
+    media.addEventListener('change', syncSystemTheme)
+
+    return () => {
+      media.removeEventListener('change', syncSystemTheme)
+    }
+  }, [])
 
   useEffect(() => {
     const root = document.documentElement
     root.classList.toggle('dark', theme === 'dark')
-    window.localStorage.setItem('theme', theme)
   }, [theme])
 
   return (
     <div className="flex h-svh flex-col overflow-hidden bg-bg text-ink">
       <TopBar
         theme={theme}
-        onThemeToggle={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
         onOpenSearch={onOpenSearch}
         userInitials={userInitials}
         onSignOut={onSignOut}
