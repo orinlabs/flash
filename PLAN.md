@@ -1,16 +1,26 @@
 # ICP Prospector — Product & Technical Plan
 
-This document breaks the vision into phases, proposes a data model and system shape, names integration options, and lists **decisions we need from you** before implementation.
+This document breaks the vision into phases, proposes a data model and system shape, and records **locked decisions** plus a small set of optional follow-ups.
+
+---
+
+## Locked decisions (from you)
+
+- **Solo use**: Single operator; no multi-tenant auth, roles, or org modeling required in v1.
+- **Contact info is optional**: A valid `person` row may have **no** email, phone, or LinkedIn yet. The product must still support **filtering** (e.g. “only people with an email,” “has LinkedIn URL,” “email is null” for enrichment queues).
+- **Enrichment**: Research sub-agents should **try to fill gaps**—including “can we find an email elsewhere?”—via integrations such as **Apollo**, **Clay**, or similar APIs (exact vendors TBD when we compare pricing and API fit).
+- **Phase 2 email**: **Gmail only** (Google OAuth + Gmail API drafts). No Microsoft 365 in scope for now.
+- **Hosting**: **Render** — web service, background worker(s), managed Postgres, and Render **cron jobs** or **workflows** for scheduled / chunked jobs. Stack choice below is whatever fits Render well; if something is easier elsewhere, swapping host later is acceptable.
+- **Out of scope for now**: “Sources that worked” analytics, effectiveness rollups, and compliance-heavy product features (you are not asking for jurisdiction tooling in v1).
 
 ---
 
 ## Goals (restated)
 
-1. **ICP → people**: You describe an ideal customer profile (free-form context). Background agents do web research (and optionally LinkedIn-adjacent research) to **discover individuals** who match, with deduplication and progress toward a target count (e.g. “find 100 people”).
-2. **Unified people + companies**: One database of people and companies, with **foreign keys**, **contact fields**, and **prospecting state** so agents do not re-prospect the same person.
-3. **Learning where discovery works**: Over time, record **which sources / query patterns / workflows** correlate with good leads so the system can prefer them.
-4. **Phase 2 — semantic search**: Per-person (and company) **keywords + embeddings** (e.g. OpenAI) for search across the corpus.
-5. **Phase 2 — email**: Connect **one or more** email accounts; for selected people, spin up **per-person drafting agents** that read DB context, optionally do more research, and return a **structured draft** (subject + body). The system creates **real drafts in your mailbox** (no auto-send); you review and send manually.
+1. **ICP → people**: You describe an ideal customer profile (free-form context). Background agents do web research (and public / vendor-sourced signals) to **discover individuals** who match, with deduplication and progress toward a target count (e.g. “find 100 people”).
+2. **Unified people + companies**: One database of people and companies, with **foreign keys**, **nullable contact fields**, and **prospecting state** so agents do not re-prospect the same person.
+3. **Phase 2 — semantic search**: Per-person (and company) **keywords + embeddings** (e.g. OpenAI) for search across the corpus.
+4. **Phase 2 — Gmail**: Connect **one or more Gmail accounts**; for selected people, spin up **per-person drafting agents** that read DB context, optionally do more research, and return a **structured draft** (subject + body). The system creates **real Gmail drafts** (no auto-send); you review and send manually.
 
 ---
 
@@ -20,21 +30,23 @@ This document breaks the vision into phases, proposes a data model and system sh
 
 | Area | Scope |
 |------|--------|
-| **Ingest ICP** | Store “campaigns” or “runs” with raw ICP text + structured knobs (target count, geography, seniority, etc. — exact fields TBD with you). |
-| **Agent orchestration** | Job queue + worker(s) that call an LLM with **tools**: web search (Exa and/or others), fetch URL, maybe news/company lookup. **No** mass LinkedIn scraping in MVP unless you explicitly accept compliance risk (see Risks). |
-| **People & companies** | Relational schema: `companies`, `people`, link people → company; unique identity to dedupe (see Data model). |
-| **Prospecting lifecycle** | States such as `discovered` → `enriched` → `prospected` (or simpler: `candidate` / `qualified` / `deduped_hit` / `archived`). Agent checks DB **before** counting a net-new lead; writes row + audit trail. |
+| **Ingest ICP** | Store campaigns with raw ICP text + structured knobs (target count, geography, seniority, etc.). |
+| **Agent orchestration** | Job queue + worker(s) on Render calling an LLM with **tools**: Exa, HTTP fetch, company normalization, DB upsert, and **enrichment** calls (Apollo / Clay / similar). |
+| **People & companies** | Relational schema: `companies`, `people`, FK people → company; dedupe on strongest available keys (see Data model). |
+| **Optional contacts** | Ingest and store people **even when** email / phone / LinkedIn are unknown; support list views and API filters: `has_email`, `has_linkedin`, etc. |
+| **Enrichment pass** | After or during discovery, a sub-flow: “given name + company (+ title), ask Apollo/Clay/etc. for email and social URLs; merge into row if confident.” |
+| **Prospecting lifecycle** | States such as `new` → `researched` → `enriched` → `prospected` / `drafted` as you add phases. Agent checks DB before counting a net-new lead. |
 | **“Find N people”** | Orchestrator runs until `qualified_count >= N` or budget/time cap; idempotent so restarts do not double-count. |
-| **Source attribution** | Every person (or edge table) records **how** they were found: query string, Exa result ID, URL, agent step ID — feeds “what worked” analytics later. |
+| **Audit trail (optional)** | `discovery_events` (or a slim `agent_steps` log) for debugging—not used for “what worked” analytics in v1. |
 
-### Part 2 — Search, email accounts, draft agents
+### Part 2 — Search, Gmail accounts, draft agents
 
 | Area | Scope |
 |------|--------|
-| **Embeddings** | Background job: chunk `people.notes`, `people.context`, company description, titles → embeddings table(s); hybrid **keyword + vector** search API. |
-| **Email OAuth** | Gmail and/or Microsoft 365 (most teams need both eventually); store refresh tokens securely (vault/KMS — decision). |
-| **Draft pipeline** | User selects subset → creates `draft_jobs` → one agent per person (with concurrency limits) → structured output JSON → provider API **create draft** (Gmail: `users.drafts.create`; Graph: create message in drafts folder). |
-| **Safety** | Rate limits, opt-out list, “do not contact” flag on `people`, optional human approval gate before draft creation. |
+| **Embeddings** | Background job: chunk `people.notes`, `people.context`, company fields, titles → embeddings; **keyword + vector** search API. |
+| **Gmail OAuth** | One or more Google accounts; refresh tokens stored as Render **secret** env vars or encrypted column (simple crypto acceptable for solo v1). |
+| **Draft pipeline** | Select people → `draft_jobs` → agent per person (concurrency limits) → structured `{ subject, body }` → **Gmail API** `users.drafts.create`. |
+| **Practical safety** | Rate limits and backoff for Exa, OpenAI, Apollo/Clay, Gmail; optional `do_not_contact` on `people` if you want a manual kill switch later. |
 
 ---
 
@@ -50,48 +62,52 @@ This document breaks the vision into phases, proposes a data model and system sh
 
 - `id` (UUID)
 - `company_id` (FK → `companies`, nullable if unknown)
-- **Identity / dedupe**: `email` (unique if present), `linkedin_url` (unique if present), or composite `normalized_name` + `company_id` + fuzzy rules (weak — better to anchor on email/LinkedIn URL when available)
-- **Contact**: `email`, `phone`, `linkedin_url`, `twitter_url`, etc.
-- **Role**: `title`, `seniority`, `department` (optional structured tags)
-- **Agent fields**: `notes` (long text), `context` (long text — research dump), `icp_keywords` (text[] or JSON for Phase 2)
-- **State machine**: e.g. `lifecycle_status` (`new`, `researched`, `prospected`, `drafted`, `contacted`, `do_not_contact`)
-- **Dedup**: `first_seen_campaign_id`, `last_seen_at`
+- **Contact (all nullable)** — `email`, `phone`, `linkedin_url`, `twitter_url`, …  
+  - **Filtering**: expose query params or views such as `email IS NOT NULL`, `linkedin_url IS NOT NULL`, combined filters for “ready to draft” vs “needs enrichment.”
+- **Identity / dedupe** (use what exists, in priority order):
+  - Strong: unique partial index on **lower(trim(email))** where email is not null; unique partial index on **canonical linkedin_url** where not null.
+  - Weaker fallback: `normalized_full_name` + `company_id` (and manual merge UI later if duplicates slip through).
+- **Role**: `title`, `seniority`, `department` (optional)
+- **Agent fields**: `notes`, `context` (research dumps), `icp_keywords` (text[] or JSON for Phase 2)
+- **Enrichment tracking (optional but useful)**: `enrichment_last_attempt_at`, `enrichment_sources` (JSONB: which APIs were tried) so the sub-agent does not hammer the same person forever.
+- **Lifecycle**: e.g. `lifecycle_status` (`new`, `researched`, `enriched`, `prospected`, `drafted`, …)
+- **Campaign lineage**: `first_seen_campaign_id`, `last_seen_at`
 - `created_at`, `updated_at`
 
-**`campaigns`** (or `icp_runs`)
+**`campaigns`**
 
-- `id`, `name`, `icp_document` (text/markdown), `target_count`, `status`, `created_by`, timestamps
+- `id`, `name`, `icp_document`, `target_count`, `status`, timestamps  
+- No `created_by` / multi-user fields required for v1.
 
-**`discovery_events`** (audit + “what worked”)
+**`discovery_events`** (debugging / audit only in v1)
 
-- `id`, `campaign_id`, `person_id` (nullable until resolved), `source_type` (`exa`, `web_fetch`, `manual`, …), `source_query`, `source_url`, `exa_result_id` (if applicable), `agent_trace_id`, `metadata` (JSONB), `created_at`
-
-**`source_effectiveness`** (can start as materialized view / nightly rollup)
-
-- Aggregates from `discovery_events` joined to outcomes (e.g. later `replied`, `meeting_booked` if you add outreach tracking) — **schema TBD** once we define “success.”
+- `id`, `campaign_id`, `person_id` (nullable until resolved), `source_type` (`exa`, `web_fetch`, `apollo`, `clay`, `manual`, …), `source_query`, `source_url`, `metadata` (JSONB), `created_at`
 
 **Phase 2 additions**
 
-- `email_accounts` — provider, OAuth tokens (encrypted), display name
-- `drafts` — `person_id`, `email_account_id`, `provider_draft_id`, `subject`, `body`, `status`, `agent_run_id`
-- `person_embeddings` / `company_embeddings` — `embedding vector`, `model`, `content_hash`, `chunk_index`
+- `email_accounts` — label, Google refresh token / client linkage, `email_address`
+- `drafts` — `person_id`, `email_account_id`, Gmail `draft_id`, `subject`, `body`, `status`, `agent_run_id`
+- `person_embeddings` / `company_embeddings` — vector + `model` + `content_hash` + `chunk_index` (pgvector on Render Postgres when enabled)
 
 ---
 
-## System architecture (recommended direction)
+## System architecture (Render-first)
 
-High level: **API + Postgres + Redis (or SQL-only queue for MVP) + worker processes**.
+**Shape**: **API (Render Web Service)** + **Postgres (Render managed)** + **Worker (Render Background Worker)** + **Cron (Render)** for periodic sweeps (e.g. retry enrichment, embedding backfill).
 
-1. **Control plane**: REST or tRPC API; creates campaigns, enqueues “find N” jobs, exposes people/company CRUD and search (Phase 2).
-2. **Agent workers**: Stateless processes pulling jobs; each job has **tool access** (Exa HTTP API, `fetch`, optional others). LLM calls are logged with **run IDs** tied to `discovery_events`.
-3. **Deduplication**: On candidate person, worker runs **UPSERT** / uniqueness check on strong keys (email, LinkedIn URL) before incrementing campaign progress.
-4. **“Already prospected”**: Before deep research, lightweight DB read; if `lifecycle_status` indicates done, agent skips to next hypothesis.
+1. **Control plane**: HTTP API — create campaigns, enqueue “find N,” list/filter people and companies (`has_email`, `has_linkedin`, text search on name/title/domain).
+2. **Agent workers**: Pull jobs from a queue implemented as **Postgres `FOR UPDATE SKIP LOCKED`** rows or **Redis** (Upstash Redis pairs well with Render if you want a dedicated queue later). Workers run the tool-calling loop (Exa, fetch, Apollo/Clay, upsert).
+3. **Deduplication**: Before counting toward N, resolve identity; **UPSERT** on email or LinkedIn URL when present.
+4. **Enrichment sub-agent**: Callable tool step or separate job type: given `person_id`, call Apollo/Clay, map response into nullable columns, set `enrichment_last_attempt_at`.
 
-**Stack (suggestions — not locked)**
+**Stack (suggestion optimized for “one person, Render, TypeScript”)**
 
-- **Backend**: Node (TypeScript) + Fastify/Hono *or* Python + FastAPI — pick based on your comfort and email SDK maturity (Google/Microsoft client libs exist for both).
-- **DB**: Postgres (pgvector in Phase 2 for embeddings).
-- **Frontend** (later): React + your UI kit; for MVP even a **Retool / admin API** could suffice.
+- **Runtime**: Node **22** + **TypeScript** + **Hono** or **Fastify** (lightweight on Render).
+- **ORM / migrations**: Drizzle or Prisma + Postgres.
+- **DB**: Render Postgres; enable **pgvector** when you start Phase 2 embeddings (Render supports extensions on managed Postgres—verify plan/extension at implementation time).
+- **Frontend (when needed)**: Single React app (Vite) on Render Static Site or second Web Service—deferred until API + worker path is solid.
+
+Python + FastAPI is equally fine if you prefer; Gmail and Google OAuth have mature libraries in both ecosystems. Default recommendation above is TS for one deployable monorepo.
 
 ---
 
@@ -99,11 +115,13 @@ High level: **API + Postgres + Redis (or SQL-only queue for MVP) + worker proces
 
 | Integration | Role |
 |-------------|------|
-| **Exa** | Semantic/neural search over the web; great for “companies like X” and “people writing about Y.” |
-| **OpenAI (or similar)** | Planner + tool-calling agent; embeddings in Phase 2. |
-| **Clearbit / Apollo / etc.** (optional) | If you want **higher hit rate on email/phone** without agents guessing — often worth it for B2B; cost + compliance tradeoff. |
-| **Gmail / Microsoft Graph** | OAuth, draft creation (Phase 2). |
-| **LinkedIn** | **Do not** rely on unofficial scraping for a serious tool; ToS and legal risk. Prefer: public web mentions, company sites, conference speaker pages, podcasts, Exa — and optional **manual** LinkedIn URL paste or **official** partner flows if you later qualify for them. |
+| **Exa** | Semantic web search for discovery hypotheses and evidence URLs. |
+| **OpenAI (or similar)** | Planner + tool-calling agents; embeddings in Phase 2. |
+| **Apollo** | B2B enrichment: email, phone, title, company match from partial identity. |
+| **Clay** | Workflow-style enrichment and waterfall lookups (often used to chain vendors); evaluate API vs no-code UI for what we automate. |
+| **Gmail API** | Phase 2: OAuth, create drafts only. |
+
+**LinkedIn**: Prefer **URLs found in public pages** or returned by **paid enrichment APIs** with acceptable terms—not logged-in scraping.
 
 ---
 
@@ -111,63 +129,39 @@ High level: **API + Postgres + Redis (or SQL-only queue for MVP) + worker proces
 
 **Prospecting agent**
 
-- Inputs: ICP text, `campaign_id`, remaining quota, exclusion lists.
-- Tools: `exa_search`, `fetch_url`, `normalize_company`, `upsert_person` (validates required fields), `log_discovery_event`.
-- Output: Structured tool calls only (no free-form “I found someone” without DB write) to keep the pipeline auditable.
+- Inputs: ICP text, `campaign_id`, remaining quota, exclusion list.
+- Tools: `exa_search`, `fetch_url`, `upsert_company`, `upsert_person` (contacts optional), `run_enrichment` (calls Apollo/Clay with mapped payload), optional `append_notes`.
+- Policy: **May** insert a person with only name + company + evidence URL; enrichment tools try to backfill email/LinkedIn.
 
 **Drafting agent (Phase 2)**
 
-- Inputs: `person_id`, style guide (your voice), constraints (length, no false claims).
-- Tools: read DB, optional `exa_search` / `fetch_url`, `submit_draft` tool returning `{ subject, body_html or body_text }`.
-- Post-process: Server creates provider draft; stores row in `drafts`.
+- Inputs: `person_id`, voice/style snippet, constraints.
+- Tools: read DB, optional `exa_search` / `fetch_url`, `submit_draft` → `{ subject, body_text | body_html }`.
+- Server: Gmail `drafts.create` using the selected `email_account_id`.
 
 ---
 
-## Open questions for you
+## Risks & guardrails (technical, not legal product)
 
-Answer these when you can — they drive schema and MVP scope.
-
-### Product
-
-1. **Primary user**: Just you, or a small team with roles (admin vs researcher)?
-2. **“100 people” definition**: Must every row have **verified email**, or is “strong LinkedIn + company” acceptable for v1 with email TBD?
-3. **Geography & compliance**: US-only first, or global? Any regulated industries (health, finance) affecting messaging retention?
-4. **Success metric for “sources that worked”**: Reply rate, meeting booked, subjective star rating, or “accepted into CRM”?
-
-### Technical
-
-5. **Email provider for Phase 2**: Gmail only, Microsoft only, or **both** from day one of email work?
-6. **Hosting**: Local-first (Docker on your machine), or deployed (Fly.io, Railway, AWS)?
-7. **Secrets**: OK to use a cloud KMS / Vault, or keep everything in `.env` for personal MVP?
-8. **Agent hosting**: Same process as API workers, or separate **Cursor Agent / external** runner that only talks to your API? (You mentioned agents “behind the scenes” — clarifying this avoids a wrong integration.)
-
-### Legal / ethics
-
-9. **Cold email jurisdiction**: Are you targeting regions with strict cold-email rules (e.g. parts of EU/UK)? That affects consent fields and suppression lists.
-10. **Data retention**: How long should raw agent traces and `discovery_events` be kept?
+- **Hallucinated contacts**: Treat enrichment APIs as **suggestions**; store provider and raw payload in `metadata` when debugging mismatches.
+- **Rate limits**: Centralize retries with exponential backoff per vendor.
+- **Duplicates**: Partial unique indexes on email and LinkedIn; weak matches flagged for your manual merge later if needed.
 
 ---
 
-## Risks & guardrails
+## Suggested implementation order
 
-- **LinkedIn**: Automated profile scraping is high-risk; plan MVP around **public** sources + optional enrichment vendors with terms of use you accept.
-- **Accuracy**: Agents hallucinate contacts; enforce **source URL** per fact and human-review-friendly exports.
-- **Rate limits**: Exa, OpenAI, and email APIs all need backoff and per-tenant quotas.
-- **Duplicate people**: Invest early in **canonical identifiers** (domain + email strongest).
-
----
-
-## Suggested implementation order (after you answer questions)
-
-1. Repo skeleton: API, Postgres migrations, Docker Compose for local Postgres.
-2. Schema: `companies`, `people`, `campaigns`, `discovery_events`.
-3. Single “prospect run” worker with Exa + fetch + structured upsert.
-4. CLI or minimal UI: create campaign, set N, watch progress.
-5. Analytics view: top queries / URLs by accepted leads.
-6. Phase 2 branch: pgvector, OAuth email, draft jobs, Gmail draft creation.
+1. Render **Blueprint** or manual setup: Web + Worker + Postgres; env vars for Exa, OpenAI, Apollo, Clay (add keys as you subscribe).
+2. Migrations: `companies`, `people`, `campaigns`, `discovery_events`.
+3. Worker: one vertical slice — campaign → Exa + fetch → upsert person (nullable contacts) → optional enrichment tool call.
+4. API: CRUD + **filters** (`has_email`, `has_linkedin`, full-text on name/title).
+5. Phase 2: pgvector, embedding job, Gmail OAuth, draft jobs.
 
 ---
 
-## Next step
+## Optional follow-ups (only if you care later)
 
-Reply to the **Open questions** section (even briefly). With those answers, the next planning iteration can lock **MVP schema**, **provider choices**, and **the first vertical slice** (e.g. “ICP text → 10 deduped people with sources in DB” end-to-end).
+- **Which enrichment vendor first**: Apollo vs Clay vs both in a waterfall (cost vs coverage)—can be decided at integration time with small eval scripts.
+- **“Qualified” for counting toward N**: Does a person count toward 100 if they have no email but have LinkedIn + strong ICP match? (Default: **yes**, with a separate filter for “ready to email.”)
+
+When you want implementation to start, the next step is scaffolding the Render-friendly repo (API + worker + Drizzle/Prisma migrations) against this schema.
