@@ -7,6 +7,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
   Users
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -19,6 +20,10 @@ import {
   useParams
 } from 'react-router-dom'
 
+import {
+  AgenticSearchModal,
+  type AgenticSearchTarget
+} from '@/components/AgenticSearchModal'
 import {
   apiAuthMe,
   apiGet,
@@ -38,6 +43,7 @@ import { CommandPalette, type CommandItem } from '@/components/CommandPalette'
 import { AppShell } from '@/components/layout/AppShell'
 import type { SidebarSection } from '@/components/layout/Sidebar'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { Badge } from '@/components/ui/badge'
 import { Banner } from '@/components/ui/banner'
 import { Button } from '@/components/ui/button'
 import { CampaignsPage } from '@/pages/CampaignsPage'
@@ -64,6 +70,14 @@ type DetailSelection =
   | { type: 'company'; id: string }
   | { type: 'crawl'; id: string }
 type PagedResponse<T> = { data: T[]; limit: number; offset: number }
+type AgenticPeopleSearchResponse = {
+  selectedPersonIds: string[]
+  errors: Array<{ personId: string; error: string }>
+}
+type AgenticCompanySearchResponse = {
+  selectedCompanyIds: string[]
+  errors: Array<{ companyId: string; error: string }>
+}
 
 const PAGE_SIZE = 100
 
@@ -231,7 +245,13 @@ function FlashApp({
   const [pendingDraftsByCompany, setPendingDraftsByCompany] = useState<Map<string, number>>(
     new Map()
   )
+  const [pendingDraftCount, setPendingDraftCount] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [agenticSearchOpen, setAgenticSearchOpen] = useState(false)
+  const [agenticPeopleMatchIds, setAgenticPeopleMatchIds] = useState<Set<string> | null>(null)
+  const [agenticCompanyMatchIds, setAgenticCompanyMatchIds] = useState<Set<string> | null>(null)
+  const [visiblePersonIds, setVisiblePersonIds] = useState<string[]>([])
+  const [visibleCompanyIds, setVisibleCompanyIds] = useState<string[]>([])
 
   const [name, setName] = useState('My ICP run')
   const [icpDocument, setIcpDocument] = useState(
@@ -311,7 +331,7 @@ function FlashApp({
 
   const loadPendingDrafts = useCallback(async () => {
     try {
-      const res = await apiGet<{ data: DraftQueueRow[] }>(
+      const res = await apiGet<{ data: DraftQueueRow[]; total: number }>(
         '/drafts?status=pending_review&limit=200'
       )
       const map = new Map<string, number>()
@@ -320,6 +340,7 @@ function FlashApp({
         map.set(row.company.id, (map.get(row.company.id) ?? 0) + 1)
       }
       setPendingDraftsByCompany(map)
+      setPendingDraftCount(res.total)
     } catch {
       // non-fatal
     }
@@ -633,15 +654,74 @@ function FlashApp({
     if (!companiesLoading && companiesHasMore) void loadCompanies(companies.length)
   }
 
+  async function handleAgenticSearch(target: AgenticSearchTarget, criteria: string) {
+    if (target === 'people') {
+      const personIds =
+        activeTab === 'people' ? visiblePersonIds : people.map((person) => person.id)
+      if (personIds.length > 200) {
+        throw new Error('Agentic search can judge up to 200 loaded people. Add filters first.')
+      }
+      const res = await apiPost<AgenticPeopleSearchResponse>('/people/agentic-search', {
+        criteria,
+        personIds
+      })
+      setAgenticPeopleMatchIds(new Set(res.selectedPersonIds))
+      setAgenticCompanyMatchIds(null)
+      goToTab('people')
+      if (res.errors.length > 0) {
+        setError('Agentic search had errors for ' + res.errors.length + ' people.')
+      }
+      return {
+        selectedCount: res.selectedPersonIds.length,
+        totalCount: personIds.length,
+        errorCount: res.errors.length
+      }
+    }
+
+    const companyIds =
+      activeTab === 'companies' ? visibleCompanyIds : companies.map((company) => company.id)
+    if (companyIds.length > 200) {
+      throw new Error('Agentic search can judge up to 200 loaded companies. Add filters first.')
+    }
+    const res = await apiPost<AgenticCompanySearchResponse>('/companies/agentic-search', {
+      criteria,
+      companyIds
+    })
+    setAgenticCompanyMatchIds(new Set(res.selectedCompanyIds))
+    setAgenticPeopleMatchIds(null)
+    goToTab('companies')
+    if (res.errors.length > 0) {
+      setError('Agentic search had errors for ' + res.errors.length + ' companies.')
+    }
+    return {
+      selectedCount: res.selectedCompanyIds.length,
+      totalCount: companyIds.length,
+      errorCount: res.errors.length
+    }
+  }
+
   const header = headerCopy[activeTab]
   const drawerOpen = detail !== null
   const selectedKey = detail?.id ?? null
+  const agenticDefaultTarget: AgenticSearchTarget =
+    activeTab === 'companies' ? 'companies' : 'people'
+  const agenticPeopleCount = activeTab === 'people' ? visiblePersonIds.length : people.length
+  const agenticCompanyCount =
+    activeTab === 'companies' ? visibleCompanyIds.length : companies.length
 
   const headerActions = (() => {
     switch (activeTab) {
       case 'people':
         return (
           <>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Agentic search"
+              onClick={() => setAgenticSearchOpen(true)}
+            >
+              <Sparkles />
+            </Button>
             <Button
               variant="outline"
               size="md"
@@ -663,15 +743,25 @@ function FlashApp({
         )
       case 'companies':
         return (
-          <Button
-            variant="outline"
-            size="md"
-            iconLeft={RefreshCw}
-            onClick={() => void loadCompanies(0)}
-            loading={companiesLoading && companies.length > 0}
-          >
-            Refresh
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Agentic search"
+              onClick={() => setAgenticSearchOpen(true)}
+            >
+              <Sparkles />
+            </Button>
+            <Button
+              variant="outline"
+              size="md"
+              iconLeft={RefreshCw}
+              onClick={() => void loadCompanies(0)}
+              loading={companiesLoading && companies.length > 0}
+            >
+              Refresh
+            </Button>
+          </>
         )
       case 'crawls':
         return (
@@ -732,9 +822,29 @@ function FlashApp({
     return <Navigate to="/people" replace />
   }
 
+  const sidebarSections = sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) =>
+      item.id === 'drafts' && pendingDraftCount > 0
+        ? {
+            ...item,
+            badge: (
+              <Badge
+                variant="accent"
+                className="h-5 min-w-5 justify-center px-1.5 text-[11px]"
+                aria-label={pendingDraftCount + ' pending review drafts'}
+              >
+                {pendingDraftCount}
+              </Badge>
+            )
+          }
+        : item
+    )
+  }))
+
   return (
     <AppShell
-      sections={sections}
+      sections={sidebarSections}
       activeId={activeTab}
       onSelect={goToTab}
       onOpenSearch={() => setPaletteOpen(true)}
@@ -751,6 +861,15 @@ function FlashApp({
         title={header.title}
         description={header.description}
         actions={headerActions}
+      />
+
+      <AgenticSearchModal
+        open={agenticSearchOpen}
+        defaultTarget={agenticDefaultTarget}
+        peopleCount={agenticPeopleCount}
+        companyCount={agenticCompanyCount}
+        onOpenChange={setAgenticSearchOpen}
+        onSearch={handleAgenticSearch}
       />
 
       {error ? (
@@ -775,6 +894,9 @@ function FlashApp({
           onSelectPerson={(person) => openDetail({ type: 'person', id: person.id })}
           onSelectCompany={(companyId) => openDetail({ type: 'company', id: companyId })}
           selectedKey={selectedKey}
+          agenticMatchIds={agenticPeopleMatchIds}
+          onClearAgenticResults={() => setAgenticPeopleMatchIds(null)}
+          onVisibleIdsChange={setVisiblePersonIds}
         />
       ) : null}
 
@@ -794,6 +916,9 @@ function FlashApp({
           onSelectCompany={(company) => openDetail({ type: 'company', id: company.id })}
           selectedKey={selectedKey}
           onError={(msg) => setError(msg)}
+          agenticMatchIds={agenticCompanyMatchIds}
+          onClearAgenticResults={() => setAgenticCompanyMatchIds(null)}
+          onVisibleIdsChange={setVisibleCompanyIds}
         />
       ) : null}
 
@@ -836,7 +961,9 @@ function FlashApp({
         />
       ) : null}
 
-      {activeTab === 'drafts' ? <DraftsPage mailboxes={mailboxes} /> : null}
+      {activeTab === 'drafts' ? (
+        <DraftsPage mailboxes={mailboxes} onPendingReviewChanged={loadPendingDrafts} />
+      ) : null}
 
       {activeTab === 'mailboxes' ? (
         <MailboxesPage

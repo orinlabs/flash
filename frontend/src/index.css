@@ -36,6 +36,8 @@
 
 @layer base {
   :root {
+    color-scheme: light;
+
     /* Surfaces - warm Ramp-leaning neutrals */
     --bg: 40 18% 97%; /* #FAFAF7 page bg */
     --surface: 0 0% 100%; /* card surface */
@@ -92,6 +94,8 @@
   }
 
   .dark {
+    color-scheme: dark;
+
     --bg: 0 0% 4%; /* #0A0A0A */
     --surface: 0 0% 7%; /* #111111 */
     --surface-muted: 0 0% 10%;
@@ -112,6 +116,8 @@
 
   @media (prefers-color-scheme: dark) {
     :root {
+      color-scheme: dark;
+
       --bg: 0 0% 4%; /* #0A0A0A */
       --surface: 0 0% 7%; /* #111111 */
       --surface-muted: 0 0% 10%;
@@ -158,6 +164,22 @@
   ::selection {
     background-color: hsl(var(--accent) / 0.22);
     color: hsl(var(--text));
+  }
+
+  input[type='checkbox'] {
+    accent-color: hsl(var(--accent));
+  }
+
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23727272' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 0.65rem center;
+    background-repeat: no-repeat;
+    background-size: 1rem;
+  }
+
+  select:not([class*='pr-']) {
+    padding-right: 2rem;
   }
 
   /* Tighten heading rhythm */

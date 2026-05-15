@@ -6,10 +6,9 @@ import {
   Play,
   RefreshCw,
   Search,
-  Sparkles,
   X
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { apiPatch, apiPost, type Company, type Mailbox, type Person } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -58,18 +57,9 @@ interface Props {
   onSelectCompany: (company: Company) => void
   selectedKey: string | null
   onError: (msg: string) => void
-}
-
-type AgenticCompanySearchResponse = {
-  selectedCompanyIds: string[]
-  results: Array<{
-    companyId: string
-    fits: boolean
-    confidence: number
-    rationale: string
-    error?: string
-  }>
-  errors: Array<{ companyId: string; error: string }>
+  agenticMatchIds: Set<string> | null
+  onClearAgenticResults: () => void
+  onVisibleIdsChange: (ids: string[]) => void
 }
 
 export function CompaniesPage({
@@ -83,7 +73,10 @@ export function CompaniesPage({
   onLoadMore,
   onSelectCompany,
   selectedKey,
-  onError
+  onError,
+  agenticMatchIds,
+  onClearAgenticResults,
+  onVisibleIdsChange
 }: Props) {
   const [search, setSearch] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -97,9 +90,11 @@ export function CompaniesPage({
   const [mailboxFilter, setMailboxFilter] = useState('all')
   const [peopleFilter, setPeopleFilter] = useState('all')
   const [draftFilter, setDraftFilter] = useState('all')
-  const [agenticCriteria, setAgenticCriteria] = useState('')
-  const [agenticSearching, setAgenticSearching] = useState(false)
-  const [agenticSummary, setAgenticSummary] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!agenticMatchIds) return
+    setSelected(new Set(agenticMatchIds))
+  }, [agenticMatchIds])
 
   const mailboxById = useMemo(() => new Map(mailboxes.map((m) => [m.id, m])), [mailboxes])
 
@@ -181,12 +176,14 @@ export function CompaniesPage({
         draftFilter === 'all' ||
         (draftFilter === 'pending' && pendingDrafts > 0) ||
         (draftFilter === 'none' && pendingDrafts === 0)
+      const matchesAgentic = !agenticMatchIds || agenticMatchIds.has(c.id)
       return (
         matchesSearch &&
         matchesOutreach &&
         matchesMailbox &&
         matchesPeople &&
-        matchesDrafts
+        matchesDrafts &&
+        matchesAgentic
       )
     })
   }, [
@@ -199,8 +196,13 @@ export function CompaniesPage({
     outreachFilter,
     mailboxFilter,
     peopleFilter,
-    draftFilter
+    draftFilter,
+    agenticMatchIds
   ])
+
+  useEffect(() => {
+    onVisibleIdsChange(filtered.map((company) => company.id))
+  }, [filtered, onVisibleIdsChange])
 
   const activeMailboxes = useMemo(
     () => mailboxes.filter((m) => m.status === 'active'),
@@ -282,44 +284,6 @@ export function CompaniesPage({
       onError(err instanceof Error ? err.message : 'Bulk update failed')
     } finally {
       setBulkPausing(false)
-    }
-  }
-
-  async function runAgenticSearch(event?: React.FormEvent) {
-    event?.preventDefault()
-    const criteria = agenticCriteria.trim()
-    if (!criteria) {
-      onError('Enter criteria for the agentic search.')
-      return
-    }
-    const targetIds = filtered.map((company) => company.id)
-    if (targetIds.length === 0) {
-      onError('No visible companies to search.')
-      return
-    }
-    if (targetIds.length > 200) {
-      onError('Agentic search can judge up to 200 visible companies. Add filters first.')
-      return
-    }
-
-    setAgenticSearching(true)
-    setAgenticSummary(null)
-    try {
-      const res = await apiPost<AgenticCompanySearchResponse>('/companies/agentic-search', {
-        criteria,
-        companyIds: targetIds
-      })
-      setSelected(new Set(res.selectedCompanyIds))
-      setAgenticSummary(
-        'Selected ' + res.selectedCompanyIds.length + ' of ' + targetIds.length + ' companies'
-      )
-      if (res.errors.length > 0) {
-        onError('Agentic search had errors for ' + res.errors.length + ' companies.')
-      }
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Agentic search failed')
-    } finally {
-      setAgenticSearching(false)
     }
   }
 
@@ -553,33 +517,18 @@ export function CompaniesPage({
           ) : null}
         </div>
       ) : null}
-      <form
-        onSubmit={(event) => void runAgenticSearch(event)}
-        className="flex shrink-0 items-center gap-2 border-b border-line bg-surface px-4 py-2"
-      >
-        <Input
-          iconLeft={Sparkles}
-          placeholder="Agentic search criteria..."
-          value={agenticCriteria}
-          onChange={(event) => setAgenticCriteria(event.target.value)}
-          className="max-w-xl"
-        />
-        <Button
-          type="submit"
-          variant="accent"
-          size="md"
-          loading={agenticSearching}
-          disabled={filtered.length === 0}
-        >
-          Agentic search
-        </Button>
-        <span className="text-xs text-ink-faint">
-          Judges {filtered.length} visible {filtered.length === 1 ? 'company' : 'companies'}
-        </span>
-        {agenticSummary ? (
-          <span className="text-xs font-medium text-ink-muted">{agenticSummary}</span>
-        ) : null}
-      </form>
+      {agenticMatchIds ? (
+        <div className="flex shrink-0 items-center gap-3 border-b border-line bg-accent-soft px-5 py-2">
+          <span className="text-sm font-medium text-ink">
+            Agentic search matched {agenticMatchIds.size}{' '}
+            {agenticMatchIds.size === 1 ? 'company' : 'companies'}
+          </span>
+          <ToolbarSpacer />
+          <Button variant="ghost" size="sm" iconLeft={X} onClick={onClearAgenticResults}>
+            Clear
+          </Button>
+        </div>
+      ) : null}
       {selected.size > 0 ? (
         <div className="flex items-center gap-3 border-b border-line bg-accent-soft px-5 py-2">
           <span className="text-sm font-medium text-ink">
@@ -635,13 +584,13 @@ export function CompaniesPage({
         rows={filtered}
         rowKey={(c) => c.id}
         loading={loading}
-        hasMore={hasMore && !search && !hasActiveFilters}
+        hasMore={hasMore && !search && !hasActiveFilters && !agenticMatchIds}
         onLoadMore={onLoadMore}
         onRowClick={onSelectCompany}
         selectedRowKey={selectedKey}
         minWidth="1100px"
         empty={
-          search || hasActiveFilters
+          search || hasActiveFilters || agenticMatchIds
             ? {
                 icon: Filter,
                 title: 'No matching companies',

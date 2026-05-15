@@ -1,6 +1,8 @@
 import {
   Activity,
   Building2,
+  ChevronLeft,
+  ChevronRight,
   DollarSign,
   Gauge,
   Globe,
@@ -27,6 +29,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { StatusDot } from '@/components/ui/status-dot'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
@@ -51,6 +54,28 @@ const RANGES: RangeOption[] = [
   { id: 'all', label: 'All time', days: null }
 ]
 
+const PAGE_SIZE = 8
+
+function numberValue(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0
+  const n = typeof value === 'string' ? Number(value) : value
+  return Number.isFinite(n) ? n : 0
+}
+
+function ratio(numerator: string | number | null | undefined, denominator: number): number {
+  if (denominator <= 0) return 0
+  return numberValue(numerator) / denominator
+}
+
+function normalize(value: string | number | null | undefined): string {
+  return String(value ?? '').toLowerCase()
+}
+
+function matchesQuery(query: string, values: Array<string | number | null | undefined>) {
+  if (!query) return true
+  return values.some((value) => normalize(value).includes(query))
+}
+
 export function UsagePage({
   crawls,
   companyById,
@@ -70,11 +95,13 @@ export function UsagePage({
   const [recent, setRecent] = useState<UsageEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const qs = range.days != null ? `?days=${range.days}` : ''
+    const qs = range.days != null ? '?days=' + range.days : ''
+    const recentQs = range.days != null ? '?limit=50&days=' + range.days : '?limit=50'
     try {
       const [s, c, r, co, p, rec] = await Promise.all([
         apiGet<UsageSummaryResponse>('/usage/summary' + qs),
@@ -82,7 +109,7 @@ export function UsagePage({
         apiGet<{ data: UsageByRunRow[] }>('/usage/by-run' + qs),
         apiGet<{ data: UsageByCompanyRow[] }>('/usage/by-company' + qs),
         apiGet<{ data: UsageByPersonRow[] }>('/usage/by-person' + qs),
-        apiGet<{ data: UsageEvent[] }>('/usage/recent?limit=50')
+        apiGet<{ data: UsageEvent[] }>('/usage/recent' + recentQs)
       ])
       setSummary(s)
       setByCampaign(c.data)
@@ -98,7 +125,8 @@ export function UsagePage({
   }, [range.days])
 
   useEffect(() => {
-    void load()
+    const id = window.setTimeout(() => void load(), 0)
+    return () => window.clearTimeout(id)
   }, [load])
 
   const crawlById = useMemo(
@@ -107,10 +135,104 @@ export function UsagePage({
   )
 
   const overall = summary?.overall
+  const searchQuery = search.trim().toLowerCase()
+
+  const filteredCampaigns = useMemo(
+    () =>
+      byCampaign.filter((r) =>
+        matchesQuery(searchQuery, [r.campaignName, r.campaignStatus, r.campaignId])
+      ),
+    [byCampaign, searchQuery]
+  )
+
+  const filteredRuns = useMemo(
+    () =>
+      byRun.filter((r) =>
+        matchesQuery(searchQuery, [
+          r.campaignName,
+          r.runStatus,
+          r.campaignId,
+          r.campaignRunId
+        ])
+      ),
+    [byRun, searchQuery]
+  )
+
+  const filteredCompanies = useMemo(
+    () =>
+      byCompany.filter((r) =>
+        matchesQuery(searchQuery, [r.companyName, r.companyDomain, r.companyId])
+      ),
+    [byCompany, searchQuery]
+  )
+
+  const filteredPeople = useMemo(
+    () =>
+      byPerson.filter((r) =>
+        matchesQuery(searchQuery, [
+          r.personName,
+          r.personTitle,
+          r.companyName,
+          r.companyId,
+          r.personId
+        ])
+      ),
+    [byPerson, searchQuery]
+  )
+
+  const filteredRecent = useMemo(
+    () =>
+      recent.filter((e) =>
+        matchesQuery(searchQuery, [
+          e.provider,
+          e.operation,
+          e.model,
+          e.campaignName,
+          e.personName,
+          e.companyName,
+          e.campaignId,
+          e.companyId,
+          e.personId
+        ])
+      ),
+    [recent, searchQuery]
+  )
+
+  const totalRows =
+    byCampaign.length + byRun.length + byCompany.length + byPerson.length + recent.length
+  const filteredRows =
+    filteredCampaigns.length +
+    filteredRuns.length +
+    filteredCompanies.length +
+    filteredPeople.length +
+    filteredRecent.length
+
+  const totalCost = numberValue(overall?.costUsd)
+  const qualifiedCount = byRun.reduce((sum, r) => sum + (r.qualifiedCount ?? 0), 0)
+  const personCount = byPerson.filter((r) => r.personId).length
+  const unattributedCampaignCost = byCampaign
+    .filter((r) => !r.campaignId)
+    .reduce((sum, r) => sum + numberValue(r.costUsd), 0)
+  const topCampaign = byCampaign.reduce<UsageByCampaignRow | null>(
+    (top, row) => (!top || numberValue(row.costUsd) > numberValue(top.costUsd) ? row : top),
+    null
+  )
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
       <Toolbar>
+        <Input
+          iconLeft={Search}
+          placeholder="Search usage..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-[280px]"
+        />
+        <span className="hidden text-xs text-ink-faint sm:inline">
+          {searchQuery
+            ? filteredRows.toLocaleString() + ' of ' + totalRows.toLocaleString() + ' rows'
+            : totalRows.toLocaleString() + ' rows'}
+        </span>
         <div className="flex items-center gap-1 rounded-md border border-line bg-surface p-0.5">
           {RANGES.map((r) => (
             <button
@@ -155,32 +277,64 @@ export function UsagePage({
             icon={DollarSign}
             label="Total spend"
             value={formatUsd(overall?.costUsd)}
-            sub={overall ? `${overall.events.toLocaleString()} events` : '-'}
+            sub={overall ? overall.events.toLocaleString() + ' events' : '-'}
             loading={loading && !summary}
           />
           <Stat
+            icon={Activity}
+            label="Avg cost / event"
+            value={formatUsd(ratio(overall?.costUsd, overall?.events ?? 0))}
+            sub={overall ? (overall.events || 0).toLocaleString() + ' billable events' : '-'}
+            loading={loading && !summary}
+          />
+          <Stat
+            icon={Sparkles}
+            label="Cost / qualified"
+            value={formatUsd(ratio(overall?.costUsd, qualifiedCount))}
+            sub={qualifiedCount.toLocaleString() + ' qualified people'}
+            loading={loading && !summary}
+          />
+          <Stat
+            icon={Users}
+            label="Cost / person"
+            value={formatUsd(ratio(overall?.costUsd, personCount))}
+            sub={personCount.toLocaleString() + ' attributed people'}
+            loading={loading && !summary}
+          />
+        </section>
+
+        <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Stat
             icon={Gauge}
-            label="Total tokens"
+            label="Token mix"
             value={formatTokens(overall?.totalTokens)}
             sub={
               overall
-                ? `${formatTokens(overall.promptTokens)} in / ${formatTokens(overall.completionTokens)} out`
+                ? formatTokens(overall.promptTokens) +
+                  ' prompt / ' +
+                  formatTokens(overall.completionTokens) +
+                  ' completion'
                 : '-'
             }
             loading={loading && !summary}
           />
           <Stat
-            icon={Search}
-            label="Crawls billed"
-            value={String(byCampaign.filter((r) => r.campaignId).length)}
-            sub={`${byRun.filter((r) => r.campaignRunId).length} runs`}
+            icon={Gauge}
+            label="Unattributed spend"
+            value={formatUsd(unattributedCampaignCost)}
+            sub={
+              totalCost > 0
+                ? ((unattributedCampaignCost / totalCost) * 100).toFixed(0) +
+                  '% of total spend'
+                : '0% of total spend'
+            }
             loading={loading && !summary}
           />
           <Stat
-            icon={Users}
-            label="People billed"
-            value={String(byPerson.filter((r) => r.personId).length)}
-            sub={`${byCompany.filter((r) => r.companyId).length} accounts`}
+            icon={Search}
+            label="Top crawl"
+            value={formatUsd(topCampaign?.costUsd)}
+            sub={topCampaign?.campaignName ?? 'No crawl spend yet'}
             loading={loading && !summary}
           />
         </section>
@@ -198,28 +352,32 @@ export function UsagePage({
         </section>
 
         <CrawlsTable
-          rows={byCampaign}
+          rows={filteredCampaigns}
+          totalRows={byCampaign.length}
           crawlById={crawlById}
           onSelectCrawl={onSelectCrawl}
           loading={loading && byCampaign.length === 0}
         />
 
         <RunsTable
-          rows={byRun}
+          rows={filteredRuns}
+          totalRows={byRun.length}
           crawlById={crawlById}
           onSelectCrawl={onSelectCrawl}
           loading={loading && byRun.length === 0}
         />
 
         <CompaniesTable
-          rows={byCompany}
+          rows={filteredCompanies}
+          totalRows={byCompany.length}
           companyById={companyById}
           onSelectCompany={onSelectCompany}
           loading={loading && byCompany.length === 0}
         />
 
         <PeopleTable
-          rows={byPerson}
+          rows={filteredPeople}
+          totalRows={byPerson.length}
           personById={personById}
           companyById={companyById}
           onSelectPerson={onSelectPerson}
@@ -228,7 +386,8 @@ export function UsagePage({
         />
 
         <RecentEventsCard
-          events={recent}
+          events={filteredRecent}
+          totalEvents={recent.length}
           onSelectCrawl={(id) => {
             const crawl = crawlById.get(id)
             if (crawl) onSelectCrawl(crawl)
@@ -320,7 +479,7 @@ function ProviderBreakdown({
                     <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
                       <div
                         className="h-full bg-accent"
-                        style={{ width: `${Math.min(100, pct).toFixed(2)}%` }}
+                        style={{ width: Math.min(100, pct).toFixed(2) + '%' }}
                       />
                     </div>
                   </div>
@@ -397,21 +556,28 @@ function ModelBreakdown({
 
 function CrawlsTable({
   rows,
+  totalRows,
   crawlById,
   onSelectCrawl,
   loading
 }: {
   rows: UsageByCampaignRow[]
+  totalRows: number
   crawlById: Map<string, Campaign>
   onSelectCrawl: (crawl: Campaign) => void
   loading: boolean
 }) {
+  const page = usePagination(rows.length)
+  const pageRows = page.slice(rows)
   return (
     <Card className="overflow-hidden">
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-3.5 text-ink-faint" />
-          <CardTitle>By crawl</CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="size-3.5 text-ink-faint" />
+            <CardTitle>By crawl</CardTitle>
+          </div>
+          <TableCount visible={rows.length} total={totalRows} />
         </div>
       </CardHeader>
       <SimpleTable
@@ -423,11 +589,12 @@ function CrawlsTable({
             <Th>Status</Th>
             <Th align="right">Events</Th>
             <Th align="right">Tokens</Th>
+            <Th align="right">Avg event</Th>
             <Th align="right">Cost</Th>
           </tr>
         }
       >
-        {rows.map((r) => {
+        {pageRows.map((r) => {
           const crawl = r.campaignId ? crawlById.get(r.campaignId) : null
           return (
             <tr
@@ -458,6 +625,9 @@ function CrawlsTable({
               <Td align="right" mono>
                 {formatTokens(r.totalTokens)}
               </Td>
+              <Td align="right" mono>
+                {formatUsd(ratio(r.costUsd, r.events))}
+              </Td>
               <Td align="right" mono strong>
                 {formatUsd(r.costUsd)}
               </Td>
@@ -465,33 +635,42 @@ function CrawlsTable({
           )
         })}
       </SimpleTable>
+      <PaginationFooter {...page} totalRows={rows.length} />
     </Card>
   )
 }
 
 function RunsTable({
   rows,
+  totalRows,
   crawlById,
   onSelectCrawl,
   loading
 }: {
   rows: UsageByRunRow[]
+  totalRows: number
   crawlById: Map<string, Campaign>
   onSelectCrawl: (crawl: Campaign) => void
   loading: boolean
 }) {
+  const page = usePagination(rows.length)
+  const pageRows = page.slice(rows)
   if (rows.length === 0 && !loading) return null
   return (
     <Card className="overflow-hidden">
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <Activity className="size-3.5 text-ink-faint" />
-          <CardTitle>By crawl run</CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Activity className="size-3.5 text-ink-faint" />
+            <CardTitle>By crawl run</CardTitle>
+          </div>
+          <TableCount visible={rows.length} total={totalRows} />
         </div>
       </CardHeader>
       <SimpleTable
         loading={loading}
         empty="No run spend recorded yet."
+        columnCount={7}
         head={
           <tr>
             <Th>Crawl</Th>
@@ -499,11 +678,12 @@ function RunsTable({
             <Th>When</Th>
             <Th align="right">Qualified</Th>
             <Th align="right">Tokens</Th>
+            <Th align="right">Cost / qual.</Th>
             <Th align="right">Cost</Th>
           </tr>
         }
       >
-        {rows.map((r) => {
+        {pageRows.map((r) => {
           const crawl = r.campaignId ? crawlById.get(r.campaignId) : null
           return (
             <tr
@@ -539,6 +719,9 @@ function RunsTable({
               <Td align="right" mono>
                 {formatTokens(r.totalTokens)}
               </Td>
+              <Td align="right" mono>
+                {formatUsd(ratio(r.costUsd, r.qualifiedCount ?? 0))}
+              </Td>
               <Td align="right" mono strong>
                 {formatUsd(r.costUsd)}
               </Td>
@@ -546,27 +729,35 @@ function RunsTable({
           )
         })}
       </SimpleTable>
+      <PaginationFooter {...page} totalRows={rows.length} />
     </Card>
   )
 }
 
 function CompaniesTable({
   rows,
+  totalRows,
   companyById,
   onSelectCompany,
   loading
 }: {
   rows: UsageByCompanyRow[]
+  totalRows: number
   companyById: Map<string, Company>
   onSelectCompany: (id: string) => void
   loading: boolean
 }) {
+  const page = usePagination(rows.length)
+  const pageRows = page.slice(rows)
   return (
     <Card className="overflow-hidden">
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <Building2 className="size-3.5 text-ink-faint" />
-          <CardTitle>By account</CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Building2 className="size-3.5 text-ink-faint" />
+            <CardTitle>By account</CardTitle>
+          </div>
+          <TableCount visible={rows.length} total={totalRows} />
         </div>
       </CardHeader>
       <SimpleTable
@@ -578,11 +769,12 @@ function CompaniesTable({
             <Th>Domain</Th>
             <Th align="right">Events</Th>
             <Th align="right">Tokens</Th>
+            <Th align="right">Avg event</Th>
             <Th align="right">Cost</Th>
           </tr>
         }
       >
-        {rows.map((r) => {
+        {pageRows.map((r) => {
           const company = r.companyId ? companyById.get(r.companyId) : null
           const fav = faviconUrl(r.companyDomain ?? company?.website)
           return (
@@ -626,6 +818,9 @@ function CompaniesTable({
               <Td align="right" mono>
                 {formatTokens(r.totalTokens)}
               </Td>
+              <Td align="right" mono>
+                {formatUsd(ratio(r.costUsd, r.events))}
+              </Td>
               <Td align="right" mono strong>
                 {formatUsd(r.costUsd)}
               </Td>
@@ -633,12 +828,14 @@ function CompaniesTable({
           )
         })}
       </SimpleTable>
+      <PaginationFooter {...page} totalRows={rows.length} />
     </Card>
   )
 }
 
 function PeopleTable({
   rows,
+  totalRows,
   personById,
   companyById,
   onSelectPerson,
@@ -646,18 +843,24 @@ function PeopleTable({
   loading
 }: {
   rows: UsageByPersonRow[]
+  totalRows: number
   personById: Map<string, Person>
   companyById: Map<string, Company>
   onSelectPerson: (person: Person) => void
   onSelectCompany: (id: string) => void
   loading: boolean
 }) {
+  const page = usePagination(rows.length)
+  const pageRows = page.slice(rows)
   return (
     <Card className="overflow-hidden">
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <Users className="size-3.5 text-ink-faint" />
-          <CardTitle>By person</CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Users className="size-3.5 text-ink-faint" />
+            <CardTitle>By person</CardTitle>
+          </div>
+          <TableCount visible={rows.length} total={totalRows} />
         </div>
       </CardHeader>
       <SimpleTable
@@ -669,11 +872,12 @@ function PeopleTable({
             <Th>Company</Th>
             <Th align="right">Events</Th>
             <Th align="right">Tokens</Th>
+            <Th align="right">Avg event</Th>
             <Th align="right">Cost</Th>
           </tr>
         }
       >
-        {rows.map((r) => {
+        {pageRows.map((r) => {
           const person = r.personId ? personById.get(r.personId) : null
           const company =
             r.companyId ? companyById.get(r.companyId) : null
@@ -722,6 +926,9 @@ function PeopleTable({
               <Td align="right" mono>
                 {formatTokens(r.totalTokens)}
               </Td>
+              <Td align="right" mono>
+                {formatUsd(ratio(r.costUsd, r.events))}
+              </Td>
               <Td align="right" mono strong>
                 {formatUsd(r.costUsd)}
               </Td>
@@ -729,38 +936,48 @@ function PeopleTable({
           )
         })}
       </SimpleTable>
+      <PaginationFooter {...page} totalRows={rows.length} />
     </Card>
   )
 }
 
 function RecentEventsCard({
   events,
+  totalEvents,
   onSelectCrawl,
   onSelectCompany,
   onSelectPerson,
   loading
 }: {
   events: UsageEvent[]
+  totalEvents: number
   onSelectCrawl: (id: string) => void
   onSelectCompany: (id: string) => void
   onSelectPerson: (id: string) => void
   loading: boolean
 }) {
+  const page = usePagination(events.length)
+  const pageRows = page.slice(events)
   return (
     <Card className="overflow-hidden">
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <Activity className="size-3.5 text-ink-faint" />
-          <CardTitle>Recent events</CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Activity className="size-3.5 text-ink-faint" />
+            <CardTitle>Recent events</CardTitle>
+          </div>
+          <TableCount visible={events.length} total={totalEvents} />
         </div>
       </CardHeader>
       <SimpleTable
         loading={loading}
         empty="No usage events yet. Run a crawl to see calls land here."
+        columnCount={7}
         head={
           <tr>
             <Th>When</Th>
             <Th>Provider</Th>
+            <Th>Model</Th>
             <Th>Crawl</Th>
             <Th>Subject</Th>
             <Th align="right">Tokens</Th>
@@ -768,7 +985,7 @@ function RecentEventsCard({
           </tr>
         }
       >
-        {events.map((e) => (
+        {pageRows.map((e) => (
           <tr key={e.id} className="border-b border-line last:border-b-0">
             <Td>
               <span className="text-xs text-ink-muted">
@@ -788,6 +1005,9 @@ function RecentEventsCard({
                   </span>
                 ) : null}
               </div>
+            </Td>
+            <Td mono>
+              {e.model ?? <span className="text-ink-faint">-</span>}
             </Td>
             <Td>
               {e.campaignId && e.campaignName ? (
@@ -832,7 +1052,84 @@ function RecentEventsCard({
           </tr>
         ))}
       </SimpleTable>
+      <PaginationFooter {...page} totalRows={events.length} />
     </Card>
+  )
+}
+
+function usePagination(rowCount: number) {
+  const [pageState, setPage] = useState(0)
+  const pageCount = Math.max(1, Math.ceil(rowCount / PAGE_SIZE))
+  const page = Math.min(pageState, pageCount - 1)
+
+  const start = page * PAGE_SIZE
+  const end = Math.min(rowCount, start + PAGE_SIZE)
+
+  return {
+    page,
+    pageCount,
+    start,
+    end,
+    canPrev: page > 0,
+    canNext: page < pageCount - 1,
+    prev: () => setPage((current) => Math.max(0, current - 1)),
+    next: () => setPage((current) => Math.min(pageCount - 1, current + 1)),
+    slice: <T,>(rows: T[]) => rows.slice(start, start + PAGE_SIZE)
+  }
+}
+
+function TableCount({ visible, total }: { visible: number; total: number }) {
+  return (
+    <span className="shrink-0 font-mono text-[11px] tabular text-ink-faint">
+      {visible === total
+        ? total.toLocaleString()
+        : visible.toLocaleString() + ' of ' + total.toLocaleString()}
+    </span>
+  )
+}
+
+function PaginationFooter({
+  page,
+  pageCount,
+  start,
+  end,
+  totalRows,
+  canPrev,
+  canNext,
+  prev,
+  next
+}: ReturnType<typeof usePagination> & { totalRows: number }) {
+  if (totalRows <= PAGE_SIZE) return null
+  return (
+    <div className="flex h-11 items-center justify-between border-t border-line bg-surface px-4">
+      <span className="text-xs text-ink-muted">
+        Showing {(start + 1).toLocaleString()}-{end.toLocaleString()} of{' '}
+        {totalRows.toLocaleString()}
+      </span>
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[11px] text-ink-faint">
+          Page {page + 1} / {pageCount}
+        </span>
+        <Button
+          variant="outline"
+          size="icon-sm"
+          onClick={prev}
+          disabled={!canPrev}
+          aria-label="Previous page"
+        >
+          <ChevronLeft />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon-sm"
+          onClick={next}
+          disabled={!canNext}
+          aria-label="Next page"
+        >
+          <ChevronRight />
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -840,12 +1137,14 @@ function SimpleTable({
   head,
   children,
   loading,
-  empty
+  empty,
+  columnCount = 6
 }: {
   head: React.ReactNode
   children: React.ReactNode
   loading: boolean
   empty: string
+  columnCount?: number
 }) {
   const childCount = Array.isArray(children) ? children.length : children ? 1 : 0
   const showEmpty = !loading && childCount === 0
@@ -859,7 +1158,7 @@ function SimpleTable({
           {loading
             ? Array.from({ length: 4 }).map((_, i) => (
                 <tr key={i} className="border-b border-line last:border-b-0">
-                  <Td colSpan={6}>
+                  <Td colSpan={columnCount}>
                     <Skeleton className="h-4 w-full" />
                   </Td>
                 </tr>
@@ -867,7 +1166,7 @@ function SimpleTable({
             : showEmpty
               ? (
                 <tr>
-                  <Td colSpan={6}>
+                  <Td colSpan={columnCount}>
                     <EmptyHint label={empty} />
                   </Td>
                 </tr>

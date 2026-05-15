@@ -1,5 +1,5 @@
 import { ChevronRight, ExternalLink, Filter, RefreshCw, Search, Users, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -46,6 +46,9 @@ interface Props {
   onSelectPerson: (person: Person) => void
   onSelectCompany: (companyId: string) => void
   selectedKey: string | null
+  agenticMatchIds: Set<string> | null
+  onClearAgenticResults: () => void
+  onVisibleIdsChange: (ids: string[]) => void
 }
 
 export function PeoplePage({
@@ -57,7 +60,10 @@ export function PeoplePage({
   onLoadMore,
   onSelectPerson,
   onSelectCompany,
-  selectedKey
+  selectedKey,
+  agenticMatchIds,
+  onClearAgenticResults,
+  onVisibleIdsChange
 }: Props) {
   const [search, setSearch] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -135,9 +141,14 @@ export function PeoplePage({
         (contactFilter === 'missing_email' && !p.email) ||
         (contactFilter === 'has_linkedin' && Boolean(p.linkedinUrl)) ||
         (contactFilter === 'missing_linkedin' && !p.linkedinUrl)
-      return matchesSearch && matchesCompany && matchesLifecycle && matchesContact
+      const matchesAgentic = !agenticMatchIds || agenticMatchIds.has(p.id)
+      return matchesSearch && matchesCompany && matchesLifecycle && matchesContact && matchesAgentic
     })
-  }, [search, people, companyById, companyFilter, lifecycleFilter, contactFilter])
+  }, [search, people, companyById, companyFilter, lifecycleFilter, contactFilter, agenticMatchIds])
+
+  useEffect(() => {
+    onVisibleIdsChange(filtered.map((person) => person.id))
+  }, [filtered, onVisibleIdsChange])
 
   function clearFilters() {
     setCompanyFilter('all')
@@ -145,7 +156,7 @@ export function PeoplePage({
     setContactFilter('all')
   }
 
-  const empty = search || hasActiveFilters
+  const empty = search || hasActiveFilters || agenticMatchIds
     ? {
         icon: Filter,
         title: 'No matching people',
@@ -346,12 +357,24 @@ export function PeoplePage({
           ) : null}
         </div>
       ) : null}
+      {agenticMatchIds ? (
+        <div className="flex shrink-0 items-center gap-3 border-b border-line bg-accent-soft px-5 py-2">
+          <span className="text-sm font-medium text-ink">
+            Agentic search matched {agenticMatchIds.size}{' '}
+            {agenticMatchIds.size === 1 ? 'person' : 'people'}
+          </span>
+          <ToolbarSpacer />
+          <Button variant="ghost" size="sm" iconLeft={X} onClick={onClearAgenticResults}>
+            Clear
+          </Button>
+        </div>
+      ) : null}
       <DataTable
         columns={columns}
         rows={filtered}
         rowKey={(p) => p.id}
         loading={loading}
-        hasMore={hasMore && !search && !hasActiveFilters}
+        hasMore={hasMore && !search && !hasActiveFilters && !agenticMatchIds}
         onLoadMore={onLoadMore}
         onRowClick={onSelectPerson}
         selectedRowKey={selectedKey}

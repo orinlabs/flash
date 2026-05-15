@@ -1,9 +1,15 @@
-import { and, desc, eq, getTableColumns, isNotNull, isNull, sql, SQL } from 'drizzle-orm'
+import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, sql, SQL } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { db } from '../db/client.js'
 import { companies, discoveryEvents, people } from '../db/schema.js'
+import { openRouterReasoningConfig } from '../lib/openrouter.js'
+import { requiredEnv } from '../workflows/repo.js'
+
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
+const AGENTIC_PEOPLE_SEARCH_MODEL = 'openai/gpt-5-nano'
+const AGENTIC_PEOPLE_SEARCH_CONCURRENCY = 12
 
 const discoveryCampaignIdsCol = sql<
   string[]
@@ -39,6 +45,136 @@ const createPerson = z.object({
   firstSeenCampaignId: z.string().uuid().optional().nullable(),
   lifecycleStatus: z.string().optional()
 })
+
+const agenticSearchSchema = z.object({
+  criteria: z.string().trim().min(1).max(4000),
+  personIds: z.array(z.string().uuid()).min(1).max(200)
+})
+
+const agenticSearchDecisionSchema = z.object({
+  fits: z.boolean(),
+  confidence: z.number().min(0).max(1).optional().default(0),
+  rationale: z.string().max(1000).optional().default('')
+})
+
+type AgenticPersonDecision = z.infer<typeof agenticSearchDecisionSchema>
+
+type OpenRouterResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null
+      refusal?: string
+    }
+  }>
+  error?: { message?: string }
+}
+
+function extractJsonObject(text: string): unknown {
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error('model did not return a JSON object')
+  }
+  return JSON.parse(text.slice(start, end + 1)) as unknown
+}
+
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<U>
+): Promise<U[]> {
+  const results: U[] = new Array(items.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await fn(items[currentIndex])
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }).map(() => worker())
+  )
+  return results
+}
+
+function personClassifierPrompt(input: {
+  criteria: string
+  person: typeof people.$inferSelect
+  company: typeof companies.$inferSelect | null
+}): Array<{ role: 'system' | 'user'; content: string }> {
+  return [
+    {
+      role: 'system',
+      content: [
+        'You are a strict B2B prospect fit classifier.',
+        'Decide whether the person fits the user criteria using only the provided person and company details.',
+        'Be conservative: select fits only when the details provide positive evidence.',
+        'Return only a JSON object with this exact shape:',
+        '{"fits": boolean, "confidence": number, "rationale": string}'
+      ].join('\n')
+    },
+    {
+      role: 'user',
+      content: JSON.stringify(
+        {
+          criteria: input.criteria,
+          person: input.person,
+          company: input.company
+        },
+        null,
+        2
+      )
+    }
+  ]
+}
+
+async function classifyPersonFit(input: {
+  apiKey: string
+  criteria: string
+  person: typeof people.$inferSelect
+  company: typeof companies.$inferSelect | null
+}): Promise<AgenticPersonDecision> {
+  const model = process.env.OPENROUTER_AGENTIC_PEOPLE_SEARCH_MODEL ?? AGENTIC_PEOPLE_SEARCH_MODEL
+  const res = await fetch(OPENROUTER_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + input.apiKey,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://api.flash.orinlabs.ai',
+      'X-Title': 'Flash People Search'
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      messages: personClassifierPrompt(input),
+      reasoning: openRouterReasoningConfig()
+    })
+  })
+
+  if (!res.ok) {
+    throw new Error('OpenRouter call failed (' + res.status + '): ' + (await res.text()))
+  }
+
+  const payload = (await res.json()) as OpenRouterResponse
+  if (payload.error?.message) {
+    throw new Error('OpenRouter error: ' + payload.error.message)
+  }
+
+  const message = payload.choices?.[0]?.message
+  if (message?.refusal) {
+    throw new Error('Model refused: ' + message.refusal)
+  }
+
+  const text = message?.content
+  if (!text) {
+    throw new Error('model returned no content')
+  }
+
+  return agenticSearchDecisionSchema.parse(extractJsonObject(text))
+}
 
 export const peopleRoutes = new Hono()
 
@@ -127,6 +263,72 @@ peopleRoutes.post('/', async (c) => {
     })
     .returning()
   return c.json(row, 201)
+})
+
+peopleRoutes.post('/agentic-search', async (c) => {
+  const parsed = agenticSearchSchema.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const apiKey = requiredEnv('OPENROUTER_API_KEY')
+  const { criteria, personIds } = parsed.data
+
+  const personRows = await db
+    .select()
+    .from(people)
+    .where(inArray(people.id, personIds))
+
+  const personById = new Map(personRows.map((person) => [person.id, person]))
+  const orderedPeople = personIds
+    .map((id) => personById.get(id))
+    .filter((person): person is typeof people.$inferSelect => Boolean(person))
+
+  const companyIds = orderedPeople
+    .map((person) => person.companyId)
+    .filter((id): id is string => Boolean(id))
+  const companyRows =
+    companyIds.length > 0
+      ? await db.select().from(companies).where(inArray(companies.id, companyIds))
+      : []
+  const companyById = new Map(companyRows.map((company) => [company.id, company]))
+
+  const results = await mapWithConcurrency(
+    orderedPeople,
+    AGENTIC_PEOPLE_SEARCH_CONCURRENCY,
+    async (person) => {
+      try {
+        const decision = await classifyPersonFit({
+          apiKey,
+          criteria,
+          person,
+          company: person.companyId ? (companyById.get(person.companyId) ?? null) : null
+        })
+        return {
+          personId: person.id,
+          fits: decision.fits,
+          confidence: decision.confidence,
+          rationale: decision.rationale
+        }
+      } catch (err) {
+        return {
+          personId: person.id,
+          fits: false,
+          confidence: 0,
+          rationale: '',
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
+
+  return c.json({
+    selectedPersonIds: results.filter((result) => result.fits).map((result) => result.personId),
+    results,
+    errors: results
+      .filter((result) => result.error)
+      .map((result) => ({ personId: result.personId, error: result.error }))
+  })
 })
 
 peopleRoutes.get('/:id', async (c) => {

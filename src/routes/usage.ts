@@ -191,6 +191,7 @@ const recentSchema = z.object({
   company_id: z.string().uuid().optional(),
   person_id: z.string().uuid().optional(),
   provider: z.string().optional(),
+  days: z.coerce.number().int().min(1).max(365).optional(),
   limit: z.coerce.number().int().min(1).max(500).optional().default(100)
 })
 
@@ -201,15 +202,18 @@ usageRoutes.get('/recent', async (c) => {
     company_id: c.req.query('company_id') ?? undefined,
     person_id: c.req.query('person_id') ?? undefined,
     provider: c.req.query('provider') ?? undefined,
+    days: c.req.query('days') ?? undefined,
     limit: c.req.query('limit') ?? undefined
   })
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400)
   }
-  const { campaign_id, campaign_run_id, company_id, person_id, provider, limit } =
+  const { campaign_id, campaign_run_id, company_id, person_id, provider, days, limit } =
     parsed.data
 
   const filters: SQL[] = []
+  const sinceFilter = buildSinceFilter(days ?? null)
+  if (sinceFilter) filters.push(sinceFilter)
   if (campaign_id) filters.push(eq(usageEvents.campaignId, campaign_id))
   if (campaign_run_id) filters.push(eq(usageEvents.campaignRunId, campaign_run_id))
   if (company_id) filters.push(eq(usageEvents.companyId, company_id))

@@ -42,9 +42,10 @@ const STATUS_OPTIONS: { value: OutreachDraftStatus | 'all'; label: string }[] = 
 
 interface Props {
   mailboxes: Mailbox[]
+  onPendingReviewChanged?: () => void
 }
 
-export function DraftsPage({ mailboxes }: Props) {
+export function DraftsPage({ mailboxes, onPendingReviewChanged }: Props) {
   const [status, setStatus] = useState<OutreachDraftStatus | 'all'>('pending_review')
   const [mailboxId, setMailboxId] = useState<string | 'all'>('all')
   const [rows, setRows] = useState<DraftQueueRow[]>([])
@@ -106,6 +107,7 @@ export function DraftsPage({ mailboxes }: Props) {
 
   function refreshAfterAction() {
     void load()
+    onPendingReviewChanged?.()
     if (selectedId) {
       setDetailLoading(true)
       apiGet<DraftDetail>('/drafts/' + selectedId)
@@ -151,7 +153,10 @@ export function DraftsPage({ mailboxes }: Props) {
           variant="outline"
           size="icon"
           aria-label="Refresh"
-          onClick={() => void load()}
+          onClick={() => {
+            void load()
+            onPendingReviewChanged?.()
+          }}
           loading={loading && rows.length > 0}
         >
           {!(loading && rows.length > 0) ? <RefreshCw /> : null}
