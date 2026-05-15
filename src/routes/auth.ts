@@ -28,7 +28,7 @@ const verifyCodeSchema = z.object({
 })
 
 const CODE_TTL_MS = 15 * 60 * 1000
-const MIN_RESEND_MS = 45 * 1000
+const MIN_RESEND_MS = 5 * 1000
 
 const lastCodeRequestAt = new Map<string, number>()
 
