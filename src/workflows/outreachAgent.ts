@@ -213,7 +213,7 @@ const TOOLS = [
     function: {
       name: 'list_drafts',
       description:
-        "Read this account's recent drafts (status, subject, body preview, to_email, agent_rationale, review_notes). Look here before drafting another email so you don't repeat angles or addressees.",
+        "Read this account's recent drafts (status, subject, body preview, to_email, agent_rationale, review_notes). Always call this before draft_email. At most one pending-review draft may exist per recipient address — if you need to rewrite to the same person, note the existing draft id and delete_draft it before drafting again.",
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -435,7 +435,7 @@ const TOOLS = [
     function: {
       name: 'delete_draft',
       description:
-        'Permanently remove a pending-review draft for THIS account (e.g. wrong recipient, bad angle, superseded). Only works while status is pending_review; cannot delete sent mail.',
+        'Permanently remove a pending-review draft for THIS account. Use this to replace a draft to the same recipient: delete_draft the old one, then draft_email the revised version. Only works while status is pending_review; cannot delete sent mail.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -452,7 +452,7 @@ const TOOLS = [
     function: {
       name: 'draft_email',
       description:
-        'Create an in-app email draft for the user to review and approve from the Drafts page. Does NOT touch Gmail. The user will approve and send (or discard) themselves. Include `agent_rationale`: a short justification for why this person, this angle, this content.',
+        'Create an in-app email draft for the user to review and approve from the Drafts page. Does NOT touch Gmail. Only one pending-review draft is allowed per to_email on this account — to revise an existing draft, delete_draft it first, then call draft_email again. Include `agent_rationale`: a short justification for why this person, this angle, this content.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -923,7 +923,7 @@ async function dispatchTool(ctx: ToolCtx, call: ToolCall): Promise<ToolDispatchR
             content: JSON.stringify({ error: 'to_email, subject, and body are required' })
           }
         }
-        const draft = await insertDraft({
+        const inserted = await insertDraft({
           companyId: ctx.companyId,
           mailboxId: ctx.mailboxId,
           personId: typeof args.person_id === 'string' ? args.person_id : null,
@@ -933,10 +933,26 @@ async function dispatchTool(ctx: ToolCtx, call: ToolCall): Promise<ToolDispatchR
           bodyHtml: typeof args.body_html === 'string' ? args.body_html : null,
           agentRationale: typeof args.agent_rationale === 'string' ? args.agent_rationale : null
         })
+        if (!inserted.ok) {
+          return {
+            kind: 'continue',
+            content: JSON.stringify({
+              error: 'duplicate_pending_draft',
+              message: inserted.error,
+              existing_draft_id: inserted.existingDraftId,
+              existing_subject: inserted.existingSubject,
+              hint: 'Call delete_draft with existing_draft_id, then draft_email again.'
+            })
+          }
+        }
         ctx.draftsCreated += 1
         return {
           kind: 'continue',
-          content: JSON.stringify({ ok: true, draft_id: draft.id, status: draft.status })
+          content: JSON.stringify({
+            ok: true,
+            draft_id: inserted.draft.id,
+            status: inserted.draft.status
+          })
         }
       }
       case 'mark_completed': {
@@ -1083,6 +1099,9 @@ function buildSystemPrompt(): string {
     '- Never draft_email to generic role inboxes (hello@, info@, contact@, sales@, support@, team@, office@, media@) unless the strategy explicitly targets that inbox AND you have sourced proof that this thread or owner is correct.',
     '- Never use an address you cannot defend: prefer a verified address from the web, press, filings, or our DB. If you cannot find the exact address but you did find the company’s real pattern (e.g. first.last@domain.com, flast@, f.last@) from staff listings, press quotes, or similar, you MAY construct the likely address for a named individual and explain the pattern + sources in agent_rationale — that is acceptable when the pattern is well-supported even if the exact mailbox is unlisted.',
     '- Do not fabricate domains, patterns, or people. If you lack both a verified address and a sourced pattern, do not draft — research more, update_strategy if needed, then sleep or pause.',
+    'Draft queue rules:',
+    '- At most one pending-review draft per recipient address (to_email) on this account. The system rejects a second draft to the same address.',
+    '- Before draft_email, call list_drafts. If a pending draft already exists for that recipient, delete_draft it first, then draft_email your revised version.',
     '- If you wrote a bad draft, delete_draft it and replace with a corrected one rather than leaving junk in the queue.',
     '',
     'Hard rules:',

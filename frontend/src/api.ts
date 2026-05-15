@@ -227,17 +227,24 @@ export type OutreachDraft = {
   updatedAt: string
 }
 
+export type DraftMailbox = {
+  id: string
+  email: string
+  displayName: string | null
+  signature: string | null
+}
+
 export type DraftQueueRow = {
   draft: OutreachDraft
   company: { id: string; name: string; domain: string | null } | null
-  mailbox: { id: string; email: string; displayName: string | null } | null
+  mailbox: DraftMailbox | null
   person: { id: string; fullName: string | null; title: string | null } | null
 }
 
 export type DraftDetail = {
   draft: OutreachDraft
   company: Company | null
-  mailbox: { id: string; email: string; displayName: string | null } | null
+  mailbox: DraftMailbox | null
   person: Person | null
   strategy: string | null
   recentEvents: OutreachEvent[]

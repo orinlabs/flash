@@ -123,14 +123,51 @@ export type InsertDraftInput = {
   agentRationale?: string | null
 }
 
-export async function insertDraft(input: InsertDraftInput): Promise<OutreachDraft> {
+export async function findPendingDraftForEmail(
+  companyId: string,
+  toEmail: string
+): Promise<OutreachDraft | null> {
+  const normalized = normalizeEmail(toEmail)
+  if (!normalized) return null
+  const [row] = await db
+    .select()
+    .from(outreachDrafts)
+    .where(
+      and(
+        eq(outreachDrafts.companyId, companyId),
+        eq(outreachDrafts.status, 'pending_review'),
+        sql`lower(${outreachDrafts.toEmail}) = ${normalized}`
+      )
+    )
+    .orderBy(desc(outreachDrafts.createdAt))
+    .limit(1)
+  return row ?? null
+}
+
+export async function insertDraft(
+  input: InsertDraftInput
+): Promise<
+  | { ok: true; draft: OutreachDraft }
+  | { ok: false; error: string; existingDraftId: string; existingSubject: string }
+> {
+  const toEmail = normalizeEmail(input.toEmail) ?? input.toEmail.trim().toLowerCase()
+  const existing = await findPendingDraftForEmail(input.companyId, toEmail)
+  if (existing) {
+    return {
+      ok: false,
+      error:
+        'A pending-review draft already exists for this recipient. Call delete_draft on the existing draft, then draft_email again with your revised copy.',
+      existingDraftId: existing.id,
+      existingSubject: existing.subject
+    }
+  }
   const [row] = await db
     .insert(outreachDrafts)
     .values({
       companyId: input.companyId,
       mailboxId: input.mailboxId,
       personId: input.personId ?? null,
-      toEmail: input.toEmail,
+      toEmail,
       subject: input.subject,
       body: input.body,
       bodyHtml: input.bodyHtml ?? null,
@@ -138,7 +175,7 @@ export async function insertDraft(input: InsertDraftInput): Promise<OutreachDraf
       status: 'pending_review'
     })
     .returning()
-  return row
+  return { ok: true, draft: row }
 }
 
 export async function listRecentDrafts(

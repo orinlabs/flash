@@ -283,23 +283,21 @@ function RecentCrawls({
           {!(loading && crawls.length > 0) ? <RefreshCw /> : null}
         </Button>
       </div>
-      <div className="h-[420px]">
-        <DataTable
-          columns={columns}
-          rows={filtered}
-          rowKey={(c) => c.id}
-          loading={loading}
-          onRowClick={onSelectCrawl}
-          selectedRowKey={selectedKey}
-          empty={{
-            icon: Sparkles,
-            title: 'No crawls yet',
-            description:
-              'Create your first crawl above. Once it runs, results land in People and Companies.',
-            compact: true
-          }}
-        />
-      </div>
+      <DataTable
+        columns={columns}
+        rows={filtered}
+        rowKey={(c) => c.id}
+        loading={loading}
+        onRowClick={onSelectCrawl}
+        selectedRowKey={selectedKey}
+        empty={{
+          icon: Sparkles,
+          title: 'No crawls yet',
+          description:
+            'Create your first crawl above. Once it runs, results land in People and Companies.',
+          compact: true
+        }}
+      />
     </Card>
   )
 }

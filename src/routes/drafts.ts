@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { db } from '../db/client.js'
 import { companies, mailboxes, outreachDrafts, outreachEvents, people } from '../db/schema.js'
 import { sendMessage } from '../lib/gmail/send.js'
+import { appendMailboxSignature, appendMailboxSignatureHtml } from '../lib/mailboxSignature.js'
 import { startWorkAccount } from '../lib/workflowTrigger.js'
 import {
   appendCompanyOutreachEmailInstructions,
@@ -99,7 +100,12 @@ draftsRoutes.get('/', async (c) => {
         ? { id: r.company.id, name: r.company.name, domain: r.company.domain }
         : null,
       mailbox: r.mailbox
-        ? { id: r.mailbox.id, email: r.mailbox.email, displayName: r.mailbox.displayName }
+        ? {
+            id: r.mailbox.id,
+            email: r.mailbox.email,
+            displayName: r.mailbox.displayName,
+            signature: r.mailbox.signature
+          }
         : null,
       person: r.person
         ? { id: r.person.id, fullName: r.person.fullName, title: r.person.title }
@@ -141,7 +147,12 @@ draftsRoutes.get('/:id', async (c) => {
     draft: row.draft,
     company: row.company,
     mailbox: row.mailbox
-      ? { id: row.mailbox.id, email: row.mailbox.email, displayName: row.mailbox.displayName }
+      ? {
+          id: row.mailbox.id,
+          email: row.mailbox.email,
+          displayName: row.mailbox.displayName,
+          signature: row.mailbox.signature
+        }
       : null,
     person: row.person,
     strategy: row.company?.outreachStrategy ?? null,
@@ -185,12 +196,24 @@ draftsRoutes.post('/:id/approve', async (c) => {
     .where(eq(outreachDrafts.id, id))
 
   try {
+    const [mailbox] = await db
+      .select({ signature: mailboxes.signature })
+      .from(mailboxes)
+      .where(eq(mailboxes.id, existing.mailboxId))
+      .limit(1)
+    const signature = mailbox?.signature ?? null
+    const outgoingBody = appendMailboxSignature(existing.body, signature)
+    const outgoingBodyHtml =
+      existing.bodyHtml?.trim() && signature
+        ? appendMailboxSignatureHtml(existing.bodyHtml, signature)
+        : existing.bodyHtml
+
     const sent = await sendMessage({
       mailboxId: existing.mailboxId,
       to: existing.toEmail,
       subject: existing.subject,
-      body: existing.body,
-      bodyHtml: existing.bodyHtml,
+      body: outgoingBody,
+      bodyHtml: outgoingBodyHtml,
       threadId: existing.gmailThreadId
     })
     const updated = await markDraftSent(id, sent)
