@@ -86,6 +86,7 @@ export function CompaniesPage({
   onError
 }: Props) {
   const [search, setSearch] = useState('')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkMailboxId, setBulkMailboxId] = useState<string | null>(null)
   const [bulkStarting, setBulkStarting] = useState(false)
@@ -474,8 +475,27 @@ export function CompaniesPage({
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
-        <div className="flex items-center gap-2">
-          <Filter className="size-4 text-ink-faint" />
+        <ToolbarSpacer />
+        <Button
+          variant={hasActiveFilters || filtersOpen ? 'subtle' : 'outline'}
+          size="md"
+          iconLeft={Filter}
+          onClick={() => setFiltersOpen((open) => !open)}
+        >
+          {hasActiveFilters ? 'Filters (' + activeFilterCount + ')' : 'Filters'}
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Refresh"
+          onClick={onRefresh}
+          loading={loading && companies.length > 0}
+        >
+          {!(loading && companies.length > 0) ? <RefreshCw /> : null}
+        </Button>
+      </Toolbar>
+      {filtersOpen ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface-muted/35 px-4 py-2">
           <select
             aria-label="Filter companies by outreach status"
             value={outreachFilter}
@@ -532,17 +552,7 @@ export function CompaniesPage({
             </Button>
           ) : null}
         </div>
-        <ToolbarSpacer />
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label="Refresh"
-          onClick={onRefresh}
-          loading={loading && companies.length > 0}
-        >
-          {!(loading && companies.length > 0) ? <RefreshCw /> : null}
-        </Button>
-      </Toolbar>
+      ) : null}
       <form
         onSubmit={(event) => void runAgenticSearch(event)}
         className="flex shrink-0 items-center gap-2 border-b border-line bg-surface px-4 py-2"
