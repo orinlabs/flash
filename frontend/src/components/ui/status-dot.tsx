@@ -21,7 +21,7 @@ const toneRing: Record<StatusTone, string> = {
 }
 
 const STATUS_MAP: Record<string, { tone: StatusTone; label?: string }> = {
-  // Crawl statuses
+  // Crawl / campaign statuses
   draft: { tone: 'neutral' },
   pending: { tone: 'warning' },
   queued: { tone: 'warning' },
@@ -29,7 +29,10 @@ const STATUS_MAP: Record<string, { tone: StatusTone; label?: string }> = {
   in_progress: { tone: 'info', label: 'in progress' },
   succeeded: { tone: 'success' },
   completed: { tone: 'success' },
+  partial: { tone: 'warning' },
   failed: { tone: 'error' },
+  // Mailboxes
+  active: { tone: 'success' },
   // Person lifecycle
   new: { tone: 'accent' },
   qualified: { tone: 'success' },
@@ -42,7 +45,7 @@ const STATUS_MAP: Record<string, { tone: StatusTone; label?: string }> = {
   dead: { tone: 'error' },
   // Outreach drafts
   pending_review: { tone: 'warning', label: 'pending review' },
-  approved: { tone: 'info' },
+  approved: { tone: 'success' },
   sent: { tone: 'success' },
   discarded: { tone: 'neutral' }
 }
