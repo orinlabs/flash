@@ -1,11 +1,10 @@
-import { ChevronsUpDown, Moon, Search, Sun } from 'lucide-react'
+import { Moon, Search, Sun } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
 
 interface TopBarProps {
-  workspaceName?: string
   userInitials?: string
   theme?: 'light' | 'dark'
   onThemeToggle?: () => void
@@ -13,7 +12,6 @@ interface TopBarProps {
 }
 
 export function TopBar({
-  workspaceName = 'ICP Prospector',
   userInitials = 'BH',
   theme = 'light',
   onThemeToggle,
@@ -22,22 +20,6 @@ export function TopBar({
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-bg px-4">
       <BrandMark />
-      <span className="text-ink-faint" aria-hidden>
-        /
-      </span>
-      <button
-        type="button"
-        className={cn(
-          'group inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-ink',
-          'hover:bg-surface-muted transition-colors duration-120'
-        )}
-      >
-        <span className="flex size-5 items-center justify-center rounded bg-primary text-[11px] font-semibold text-primary-foreground">
-          {workspaceName[0]}
-        </span>
-        <span className="font-medium">{workspaceName}</span>
-        <ChevronsUpDown className="size-3 text-ink-faint" />
-      </button>
 
       <div className="ml-2 flex flex-1 justify-center">
         <CommandInput onOpen={onOpenSearch} />
