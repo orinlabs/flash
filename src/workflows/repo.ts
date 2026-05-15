@@ -83,6 +83,77 @@ function isUniqueViolation(err: unknown): boolean {
 
 const EXA_SEARCH_URL = 'https://api.exa.ai/search'
 const EXA_CONTENTS_URL = 'https://api.exa.ai/contents'
+const EXA_MIN_REQUEST_INTERVAL_MS = 100
+const EXA_MAX_ATTEMPTS = 5
+const EXA_INITIAL_BACKOFF_MS = 500
+const EXA_MAX_BACKOFF_MS = 8000
+const EXA_RETRY_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504])
+
+let nextExaRequestAt = 0
+let exaRateLimitQueue = Promise.resolve()
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function jitter(ms: number): number {
+  return Math.round(ms * (0.75 + Math.random() * 0.5))
+}
+
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+
+  const dateMs = Date.parse(value)
+  if (Number.isNaN(dateMs)) return null
+  return Math.max(0, dateMs - Date.now())
+}
+
+async function waitForExaSlot(): Promise<void> {
+  const previous = exaRateLimitQueue
+  let release!: () => void
+  exaRateLimitQueue = new Promise((resolve) => {
+    release = resolve
+  })
+
+  await previous
+  try {
+    const now = Date.now()
+    const waitMs = Math.max(0, nextExaRequestAt - now)
+    if (waitMs > 0) await sleep(waitMs)
+    nextExaRequestAt = Date.now() + EXA_MIN_REQUEST_INTERVAL_MS
+  } finally {
+    release()
+  }
+}
+
+async function fetchExaWithBackoff(url: string, init: RequestInit): Promise<Response> {
+  let lastNetworkError: unknown
+
+  for (let attempt = 1; attempt <= EXA_MAX_ATTEMPTS; attempt += 1) {
+    await waitForExaSlot()
+
+    try {
+      const res = await fetch(url, init)
+      if (!EXA_RETRY_STATUSES.has(res.status) || attempt === EXA_MAX_ATTEMPTS) {
+        return res
+      }
+
+      const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'))
+      const fallbackMs = Math.min(EXA_MAX_BACKOFF_MS, EXA_INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
+      await sleep(retryAfterMs ?? jitter(fallbackMs))
+    } catch (err) {
+      lastNetworkError = err
+      if (attempt === EXA_MAX_ATTEMPTS) break
+
+      const fallbackMs = Math.min(EXA_MAX_BACKOFF_MS, EXA_INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
+      await sleep(jitter(fallbackMs))
+    }
+  }
+
+  throw lastNetworkError instanceof Error ? lastNetworkError : new Error('Exa request failed')
+}
 
 export type ExaResult = {
   title: string | null
@@ -93,7 +164,7 @@ export type ExaResult = {
 }
 
 export async function exaSearch(query: string, numResults: number): Promise<ExaResult[]> {
-  const res = await fetch(EXA_SEARCH_URL, {
+  const res = await fetchExaWithBackoff(EXA_SEARCH_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -147,7 +218,7 @@ export async function exaSearch(query: string, numResults: number): Promise<ExaR
 }
 
 export async function exaFetchUrl(url: string): Promise<{ text: string | null; title: string | null }> {
-  const res = await fetch(EXA_CONTENTS_URL, {
+  const res = await fetchExaWithBackoff(EXA_CONTENTS_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
