@@ -14,7 +14,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { db } from '../db/client.js'
-import { companies, mailboxes, outreachDrafts, people } from '../db/schema.js'
+import { companies, discoveryEvents, mailboxes, outreachDrafts, people } from '../db/schema.js'
 import { openRouterReasoningConfig } from '../lib/openrouter.js'
 import { startSweepDueAccounts, startWorkAccount } from '../lib/workflowTrigger.js'
 import {
@@ -64,6 +64,8 @@ const querySchema = z.object({
   has_mailbox: z.enum(['true', 'false']).optional(),
   has_people: z.enum(['true', 'false']).optional(),
   pending_drafts: z.enum(['true', 'false']).optional(),
+  campaign_id: z.string().uuid().optional(),
+  campaign_run_id: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
   offset: z.coerce.number().int().min(0).optional().default(0)
 })
@@ -78,6 +80,8 @@ companiesRoutes.get('/', async (c) => {
     has_mailbox: c.req.query('has_mailbox') ?? undefined,
     has_people: c.req.query('has_people') ?? undefined,
     pending_drafts: c.req.query('pending_drafts') ?? undefined,
+    campaign_id: c.req.query('campaign_id') ?? undefined,
+    campaign_run_id: c.req.query('campaign_run_id') ?? undefined,
     limit: c.req.query('limit') ?? undefined,
     offset: c.req.query('offset') ?? undefined
   })
@@ -92,6 +96,8 @@ companiesRoutes.get('/', async (c) => {
     has_mailbox,
     has_people,
     pending_drafts,
+    campaign_id,
+    campaign_run_id,
     limit,
     offset
   } = parsed.data
@@ -139,6 +145,28 @@ companiesRoutes.get('/', async (c) => {
   if (pending_drafts === 'false') {
     filters.push(
       sql`not exists (select 1 from ${outreachDrafts} where ${outreachDrafts.companyId} = ${companies.id} and ${outreachDrafts.status} = 'pending_review')`
+    )
+  }
+  if (campaign_id) {
+    filters.push(
+      sql`exists (
+        select 1
+        from ${people}
+        join ${discoveryEvents} on ${discoveryEvents.personId} = ${people.id}
+        where ${people.companyId} = ${companies.id}
+          and ${discoveryEvents.campaignId} = ${campaign_id}
+      )`
+    )
+  }
+  if (campaign_run_id) {
+    filters.push(
+      sql`exists (
+        select 1
+        from ${people}
+        join ${discoveryEvents} on ${discoveryEvents.personId} = ${people.id}
+        where ${people.companyId} = ${companies.id}
+          and ${discoveryEvents.metadata}->>'campaignRunId' = ${campaign_run_id}
+      )`
     )
   }
 

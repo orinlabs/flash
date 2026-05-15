@@ -39,5 +39,7 @@ export function buildCompaniesPath(
   else if (list.mailboxScope === 'unassigned') params.set('has_mailbox', 'false')
   if (list.hasPeople) params.set('has_people', list.hasPeople)
   if (list.pendingDrafts) params.set('pending_drafts', list.pendingDrafts)
+  if (list.campaignId) params.set('campaign_id', list.campaignId)
+  if (list.campaignRunId) params.set('campaign_run_id', list.campaignRunId)
   return '/companies?' + params.toString()
 }

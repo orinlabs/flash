@@ -170,6 +170,13 @@ export function FlashApp({
   const [agenticPeopleMatchIds, setAgenticPeopleMatchIds] = useState<Set<string> | null>(null)
   const [agenticCompanyMatchIds, setAgenticCompanyMatchIds] = useState<Set<string> | null>(null)
   const [peopleCrawlFilter, setPeopleCrawlFilter] = useState<PeopleCrawlFilter | null>(null)
+  const [companyCrawlSelection, setCompanyCrawlSelection] = useState<{
+    key: string
+    campaignId: string
+    campaignRunId: string | null
+    label: string
+    runLabel?: string
+  } | null>(null)
   const [visiblePersonIds, setVisiblePersonIds] = useState<string[]>([])
   const [visibleCompanyIds, setVisibleCompanyIds] = useState<string[]>([])
   const {
@@ -497,6 +504,39 @@ export function FlashApp({
     [loadCrawlRuns, openDetail, goToTab]
   )
 
+  const selectCompaniesForCrawl = useCallback(
+    (campaignId: string, campaignRunId: string | null = null) => {
+      setAgenticCompanyMatchIds(null)
+      setCompaniesFetchParams(
+        campaignRunId ? { campaignId, campaignRunId } : { campaignId }
+      )
+
+      const crawl = crawlById.get(campaignId)
+      const runs = crawlRunsByCrawlId[campaignId] ?? []
+      const runIndex = campaignRunId
+        ? runs.findIndex((run) => run.id === campaignRunId)
+        : -1
+      const runLabel =
+        campaignRunId && runIndex >= 0 ? 'Run #' + (runs.length - runIndex) : undefined
+
+      setCompanyCrawlSelection({
+        key: campaignId + ':' + (campaignRunId ?? 'all'),
+        campaignId,
+        campaignRunId,
+        label: crawl?.name ?? 'crawl',
+        runLabel
+      })
+      openDetail(null)
+      goToTab('companies')
+    },
+    [crawlById, crawlRunsByCrawlId, openDetail, goToTab]
+  )
+
+  function clearCompanyCrawlSelection() {
+    setCompanyCrawlSelection(null)
+    setCompaniesFetchParams({})
+  }
+
   function handlePeopleCrawlFilterChange(
     campaignId: string | null,
     campaignRunId: string | null
@@ -793,6 +833,8 @@ export function FlashApp({
           onError={(msg) => setError(msg)}
           agenticMatchIds={agenticCompanyMatchIds}
           onClearAgenticResults={() => setAgenticCompanyMatchIds(null)}
+          crawlSelection={companyCrawlSelection}
+          onClearCrawlSelection={clearCompanyCrawlSelection}
           onVisibleIdsChange={setVisibleCompanyIds}
         />
       ) : null}
@@ -891,6 +933,7 @@ export function FlashApp({
         onSelectCompany={(companyId) => openDetail({ type: 'company', id: companyId })}
         onRunCrawl={startRun}
         onViewPeopleForCrawl={viewPeopleForCrawl}
+        onSelectCompaniesForCrawl={selectCompaniesForCrawl}
         onCompanyChanged={() => {
           void loadCompanies(0)
           void loadPendingDrafts()

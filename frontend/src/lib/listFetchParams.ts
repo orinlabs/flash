@@ -33,4 +33,6 @@ export type CompaniesTableFetchParams = {
   mailboxScope?: 'assigned' | 'unassigned'
   hasPeople?: 'true' | 'false'
   pendingDrafts?: 'true' | 'false'
+  campaignId?: string
+  campaignRunId?: string
 }

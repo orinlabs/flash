@@ -1,4 +1,4 @@
-import { Users } from 'lucide-react'
+import { Building2, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { apiGet, type Campaign, type CampaignRun, type Person, type UsageByCampaignRow, type UsageByRunRow } from '@/api'
@@ -22,7 +22,8 @@ export function CrawlView({
   peopleLoading,
   usage,
   onSelectPerson,
-  onViewPeopleForCrawl
+  onViewPeopleForCrawl,
+  onSelectCompaniesForCrawl
 }: {
   crawl: Campaign
   runs: CampaignRun[]
@@ -32,8 +33,10 @@ export function CrawlView({
   usage: { totals: UsageByCampaignRow | null; runs: UsageByRunRow[] } | null
   onSelectPerson: (person: Person) => void
   onViewPeopleForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
+  onSelectCompaniesForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
 }) {
   const totalQualified = runs.reduce((acc, r) => acc + (r.qualifiedCount ?? 0), 0)
+  const companyCount = uniqueCompanyCount(people)
   const usageByRunId = new Map(
     (usage?.runs ?? [])
       .filter((r): r is UsageByRunRow & { campaignRunId: string } =>
@@ -106,15 +109,25 @@ export function CrawlView({
                 </span>
               }
             />
-            {people.length > 0 && onViewPeopleForCrawl ? (
-              <div className="border-t border-line px-4 py-3">
+            {people.length > 0 && (onViewPeopleForCrawl || onSelectCompaniesForCrawl) ? (
+              <div className="flex flex-wrap gap-2 border-t border-line px-4 py-3">
                 <Button
                   variant="outline"
                   size="sm"
                   iconLeft={Users}
-                  onClick={() => onViewPeopleForCrawl(crawl.id)}
+                  onClick={() => onViewPeopleForCrawl?.(crawl.id)}
+                  disabled={!onViewPeopleForCrawl}
                 >
                   View in People
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  iconLeft={Building2}
+                  onClick={() => onSelectCompaniesForCrawl?.(crawl.id)}
+                  disabled={!onSelectCompaniesForCrawl || companyCount === 0}
+                >
+                  Select companies{companyCount > 0 ? ' (' + companyCount + ')' : ''}
                 </Button>
               </div>
             ) : null}
@@ -180,6 +193,7 @@ export function CrawlView({
                   crawlId={crawl.id}
                   onSelectPerson={onSelectPerson}
                   onViewPeopleForCrawl={onViewPeopleForCrawl}
+                  onSelectCompaniesForCrawl={onSelectCompaniesForCrawl}
                   key={run.id}
                 />
               ))}
@@ -202,14 +216,27 @@ export function CrawlView({
           ) : (
             <div className="space-y-3">
               {onViewPeopleForCrawl ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  iconLeft={Users}
-                  onClick={() => onViewPeopleForCrawl(crawl.id)}
-                >
-                  View all in People
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    iconLeft={Users}
+                    onClick={() => onViewPeopleForCrawl(crawl.id)}
+                  >
+                    View all in People
+                  </Button>
+                  {onSelectCompaniesForCrawl ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      iconLeft={Building2}
+                      onClick={() => onSelectCompaniesForCrawl(crawl.id)}
+                      disabled={companyCount === 0}
+                    >
+                      Select companies{companyCount > 0 ? ' (' + companyCount + ')' : ''}
+                    </Button>
+                  ) : null}
+                </div>
               ) : null}
               <div className="overflow-hidden rounded-lg border border-line bg-surface">
                 {people.map((p, idx) => (
@@ -249,7 +276,8 @@ function RunRow({
   usage,
   crawlId,
   onSelectPerson,
-  onViewPeopleForCrawl
+  onViewPeopleForCrawl,
+  onSelectCompaniesForCrawl
 }: {
   run: CampaignRun
   index: number
@@ -257,6 +285,7 @@ function RunRow({
   crawlId: string
   onSelectPerson: (person: Person) => void
   onViewPeopleForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
+  onSelectCompaniesForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
 }) {
   const [runPeople, setRunPeople] = useState<Person[]>([])
   const [runPeopleLoading, setRunPeopleLoading] = useState(true)
@@ -286,6 +315,7 @@ function RunRow({
   const checkpointEntries = Object.entries(run.checkpoint ?? {}).filter(
     ([k]) => k !== 'step'
   )
+  const runCompanyCount = uniqueCompanyCount(runPeople)
   return (
     <article className="overflow-hidden rounded-lg border border-line bg-surface">
       <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -305,6 +335,19 @@ function RunRow({
               {runPeopleLoading
                 ? 'People…'
                 : 'People' + (runPeople.length > 0 ? ' (' + runPeople.length + ')' : '')}
+            </Button>
+          ) : null}
+          {onSelectCompaniesForCrawl ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              iconLeft={Building2}
+              disabled={runPeopleLoading || runCompanyCount === 0}
+              onClick={() => onSelectCompaniesForCrawl(crawlId, run.id)}
+            >
+              {runPeopleLoading
+                ? 'Companies…'
+                : 'Companies' + (runCompanyCount > 0 ? ' (' + runCompanyCount + ')' : '')}
             </Button>
           ) : null}
           <span className="text-xs text-ink-muted">
@@ -409,4 +452,8 @@ function RunRow({
     </article>
 
   )
+}
+
+function uniqueCompanyCount(people: Person[]): number {
+  return new Set(people.map((person) => person.companyId).filter(Boolean)).size
 }

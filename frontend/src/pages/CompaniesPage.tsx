@@ -45,6 +45,14 @@ interface Props {
   onError: (msg: string) => void
   agenticMatchIds: Set<string> | null
   onClearAgenticResults: () => void
+  crawlSelection:
+    | {
+        key: string
+        label: string
+        runLabel?: string
+      }
+    | null
+  onClearCrawlSelection: () => void
   onVisibleIdsChange: (ids: string[]) => void
 }
 
@@ -62,6 +70,8 @@ export function CompaniesPage({
   onError,
   agenticMatchIds,
   onClearAgenticResults,
+  crawlSelection,
+  onClearCrawlSelection,
   onVisibleIdsChange
 }: Props) {
   const [search, setSearch] = useState('')
@@ -117,6 +127,17 @@ export function CompaniesPage({
     if (!agenticMatchIds) return
     setSelected(new Set(agenticMatchIds))
   }, [agenticMatchIds])
+
+  useEffect(() => {
+    if (!crawlSelection) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) setSelected(new Set(companies.map((company) => company.id)))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [crawlSelection, companies])
 
   const mailboxById = useMemo(() => new Map(mailboxes.map((m) => [m.id, m])), [mailboxes])
 
@@ -454,6 +475,26 @@ export function CompaniesPage({
           </Button>
         </div>
       ) : null}
+      {crawlSelection ? (
+        <div className="flex shrink-0 items-center gap-3 border-b border-line bg-accent-soft px-5 py-2">
+          <span className="text-sm font-medium text-ink">
+            Showing companies from {crawlSelection.label}
+            {crawlSelection.runLabel ? ' · ' + crawlSelection.runLabel : ''}
+          </span>
+          <ToolbarSpacer />
+          <Button
+            variant="ghost"
+            size="sm"
+            iconLeft={X}
+            onClick={() => {
+              setSelected(new Set())
+              onClearCrawlSelection()
+            }}
+          >
+            Clear
+          </Button>
+        </div>
+      ) : null}
       {selected.size > 0 ? (
         <div className="flex items-center gap-3 border-b border-line bg-accent-soft px-5 py-2">
           <span className="text-sm font-medium text-ink">{selected.size} selected</span>
@@ -513,7 +554,7 @@ export function CompaniesPage({
         selectedRowKey={selectedKey}
         minWidth="1100px"
         empty={
-          trimmedSearch || hasActiveFilters || agenticMatchIds
+          trimmedSearch || hasActiveFilters || agenticMatchIds || crawlSelection
             ? {
                 icon: Filter,
                 title: 'No matching companies',
