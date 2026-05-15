@@ -21,5 +21,11 @@ jobs:
           npm install -g yarn@1.22.22
           yarn install --frozen-lockfile
 
-      - name: Syntax check
-        run: node --check server.js
+      - name: Typecheck and build API
+        run: yarn typecheck && yarn build
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          yarn install --frozen-lockfile
+          yarn build

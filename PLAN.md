@@ -125,9 +125,9 @@ Unchanged: OpenAI (etc.) bills the same regardless of Render service type. Keep 
 
 ## Repo layout (target)
 
-- **`render.yaml`** — Blueprint: Postgres + API web service (lowest tiers).
-- **`server.js`** — Temporary minimal API shell until replaced by Fastify/Hono/etc.
-- **Workflow code** (next implementation step): e.g. `workflows/` TypeScript package using `@renderinc/sdk` / `task()` definitions; deployed as a **Render Workflow** service linked to the repo.
+- **`render.yaml`** — Blueprint: Postgres + API web service + **static** UI (`frontend/`, build-time `VITE_API_BASE_URL` → API origin).
+- **`src/`** — Hono API, Drizzle schema, Render Workflow task entry (`src/workflows/`).
+- **`frontend/`** — Vite + React + **shadcn/ui** (Tailwind v3); dev uses Vite proxy `/api` → local API.
 
 ---
 

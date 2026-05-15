@@ -2,13 +2,35 @@
   "name": "icp-prospector",
   "private": true,
   "version": "0.0.1",
-  "description": "ICP prospecting API (Render web service shell)",
+  "description": "ICP prospecting API + Render Workflows",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "start": "node server.js",
-    "build": "node -e \"console.log('no build yet')\""
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "workflow:start": "node dist/workflows/entry.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.0",
+    "@renderinc/sdk": "^0.5.0",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.0",
+    "hono": "^4.11.0",
+    "pg": "^8.16.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.15.0",
+    "drizzle-kit": "^0.31.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
   }
 }

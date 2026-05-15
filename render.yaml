@@ -26,3 +26,17 @@ services:
         fromDatabase:
           name: icp-prospector-db
           property: connectionString
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_WORKFLOW_SLUG
+        sync: false
+
+  - type: web
+    name: icp-prospector-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: yarn install && yarn build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
