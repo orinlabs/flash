@@ -10,7 +10,7 @@ This document breaks the vision into phases, proposes a data model and system sh
 - **Contact info is optional**: A valid `person` row may have **no** email, phone, or LinkedIn yet. The product must still support **filtering** (e.g. “only people with an email,” “has LinkedIn URL,” “email is null” for enrichment queues).
 - **Enrichment**: Research sub-agents should **try to fill gaps**—including “can we find an email elsewhere?”—via integrations such as **Apollo**, **Clay**, or similar APIs (exact vendors TBD when we compare pricing and API fit).
 - **Phase 2 email**: **Gmail only** (Google OAuth + Gmail API drafts). No Microsoft 365 in scope for now.
-- **Hosting**: **Render** — web service, background worker(s), managed Postgres, and Render **cron jobs** or **workflows** for scheduled / chunked jobs. Stack choice below is whatever fits Render well; if something is easier elsewhere, swapping host later is acceptable.
+- **Hosting / cost posture**: **Minimize idle infra cost**; assume **LLM tokens + APIs** are the main bill. Prefer **serverless-friendly** pieces with **verifiable checkpoints** (durable steps or explicit DB state). **Vercel** is a strong default for the **HTTP surface + CI auto-deploy**; long agent work is usually paired with a **workflow runner** or **chunked jobs** (see Architecture). **Render** (web + worker + Postgres + cron) remains a fine alternative if you want one vendor and an always-on worker without orchestration glue.
 - **Out of scope for now**: “Sources that worked” analytics, effectiveness rollups, and compliance-heavy product features (you are not asking for jurisdiction tooling in v1).
 
 ---
@@ -31,7 +31,7 @@ This document breaks the vision into phases, proposes a data model and system sh
 | Area | Scope |
 |------|--------|
 | **Ingest ICP** | Store campaigns with raw ICP text + structured knobs (target count, geography, seniority, etc.). |
-| **Agent orchestration** | Job queue + worker(s) on Render calling an LLM with **tools**: Exa, HTTP fetch, company normalization, DB upsert, and **enrichment** calls (Apollo / Clay / similar). |
+| **Agent orchestration** | Durable **workflow steps** or **queued chunks** (see Architecture) calling an LLM with **tools**: Exa, HTTP fetch, company normalization, DB upsert, and **enrichment** (Apollo / Clay / similar). |
 | **People & companies** | Relational schema: `companies`, `people`, FK people → company; dedupe on strongest available keys (see Data model). |
 | **Optional contacts** | Ingest and store people **even when** email / phone / LinkedIn are unknown; support list views and API filters: `has_email`, `has_linkedin`, etc. |
 | **Enrichment pass** | After or during discovery, a sub-flow: “given name + company (+ title), ask Apollo/Clay/etc. for email and social URLs; merge into row if confident.” |
@@ -44,7 +44,7 @@ This document breaks the vision into phases, proposes a data model and system sh
 | Area | Scope |
 |------|--------|
 | **Embeddings** | Background job: chunk `people.notes`, `people.context`, company fields, titles → embeddings; **keyword + vector** search API. |
-| **Gmail OAuth** | One or more Google accounts; refresh tokens stored as Render **secret** env vars or encrypted column (simple crypto acceptable for solo v1). |
+| **Gmail OAuth** | One or more Google accounts; refresh tokens in **Vercel env** (or encrypted DB column for solo v1). |
 | **Draft pipeline** | Select people → `draft_jobs` → agent per person (concurrency limits) → structured `{ subject, body }` → **Gmail API** `users.drafts.create`. |
 | **Practical safety** | Rate limits and backoff for Exa, OpenAI, Apollo/Clay, Gmail; optional `do_not_contact` on `people` if you want a manual kill switch later. |
 
@@ -87,27 +87,60 @@ This document breaks the vision into phases, proposes a data model and system sh
 
 - `email_accounts` — label, Google refresh token / client linkage, `email_address`
 - `drafts` — `person_id`, `email_account_id`, Gmail `draft_id`, `subject`, `body`, `status`, `agent_run_id`
-- `person_embeddings` / `company_embeddings` — vector + `model` + `content_hash` + `chunk_index` (pgvector on Render Postgres when enabled)
+- `person_embeddings` / `company_embeddings` — vector + `model` + `content_hash` + `chunk_index` (**pgvector** on Postgres; Neon and many managed providers support it)
 
 ---
 
-## System architecture (Render-first)
+## System architecture (cost-first, checkpoint-friendly)
 
-**Shape**: **API (Render Web Service)** + **Postgres (Render managed)** + **Worker (Render Background Worker)** + **Cron (Render)** for periodic sweeps (e.g. retry enrichment, embedding backfill).
+### Should “everything” run on Vercel?
 
-1. **Control plane**: HTTP API — create campaigns, enqueue “find N,” list/filter people and companies (`has_email`, `has_linkedin`, text search on name/title/domain).
-2. **Agent workers**: Pull jobs from a queue implemented as **Postgres `FOR UPDATE SKIP LOCKED`** rows or **Redis** (Upstash Redis pairs well with Render if you want a dedicated queue later). Workers run the tool-calling loop (Exa, fetch, Apollo/Clay, upsert).
-3. **Deduplication**: Before counting toward N, resolve identity; **UPSERT** on email or LinkedIn URL when present.
-4. **Enrichment sub-agent**: Callable tool step or separate job type: given `person_id`, call Apollo/Clay, map response into nullable columns, set `enrichment_last_attempt_at`.
+**Put the app on Vercel; do not rely on a single long Serverless Function for whole prospect runs.**
 
-**Stack (suggestion optimized for “one person, Render, TypeScript”)**
+Vercel Serverless Functions are great for request/response and short work, but **multi-minute agent loops** (many LLM rounds + HTTP fetches) hit **timeouts** and are awkward to resume. You still want Vercel for **Git-connected auto-deploy**, preview URLs, and edge-friendly APIs—that part is excellent DX and usually **cheap at low traffic**.
 
-- **Runtime**: Node **22** + **TypeScript** + **Hono** or **Fastify** (lightweight on Render).
-- **ORM / migrations**: Drizzle or Prisma + Postgres.
-- **DB**: Render Postgres; enable **pgvector** when you start Phase 2 embeddings (Render supports extensions on managed Postgres—verify plan/extension at implementation time).
-- **Frontend (when needed)**: Single React app (Vite) on Render Static Site or second Web Service—deferred until API + worker path is solid.
+**Token spend is independent of host** (OpenAI/Anthropic bill the same whether the caller runs on Vercel, Render, or your laptop). Infra savings come from **not paying for an idle 24/7 worker** unless you need it.
 
-Python + FastAPI is equally fine if you prefer; Gmail and Google OAuth have mature libraries in both ecosystems. Default recommendation above is TS for one deployable monorepo.
+### Recommended default (good for solo + easy CI + verifiable checkpoints)
+
+| Piece | Role | Why |
+|--------|------|-----|
+| **Vercel** | **Next.js** (App Router) or **Nitro** — UI (later), REST/route handlers, OAuth callbacks, webhooks | Native Git integration → **auto-deploy on push**; preview deployments; one repo to clone and test. |
+| **Neon** (or **Supabase**) Postgres | Source of truth: people, companies, campaigns, job rows, optional `agent_runs` / step metadata | **Scales to near-zero** when idle; **pgvector** when you need embeddings; cheap starter tiers. |
+| **Inngest** or **Trigger.dev** | **Durable workflows**: each step is a checkpoint, automatic retries, run history in a dashboard | Fits the “agent = many steps” model without you building a worker VM; integrates cleanly with Vercel (HTTP signing / SDK). **This is the main ‘verifiable checkpoint’ layer** beyond Postgres. |
+| **GitHub Actions** | `lint` / `typecheck` / `test` on every PR + main | Standard, free for public repos; private repos within GH limits. Vercel can **block deploy on failed checks** if you enable it. |
+
+**Checkpoints live in two places** (redundant on purpose):
+
+1. **Workflow product**: step completion + logs (Inngest/Trigger) — easy to answer “where did this run die?”
+2. **Postgres**: `campaigns.status`, `campaign_runs` / `jobs` rows with `cursor`, `last_error`, `counts`, `updated_at` — **idempotent resume** and your own queries/reports without vendor lock-in.
+
+Each **durable step** should be **small** (e.g. “run one discovery hypothesis,” “enrich one person,” “embed one batch”) so retries are cheap and token use is bounded per step.
+
+### Ultra-cheap / minimal moving parts (no workflow SaaS)
+
+If you want **almost no extra services**: **Postgres job queue only** + **Vercel Cron** hitting a route that processes **one bounded chunk** per invocation (`FOR UPDATE SKIP LOCKED` on a `jobs` table). Checkpoints = **row updates in Postgres**. Downsides: you design retries, concurrency caps, and observability yourself; runs are less “first-class” than Inngest/Trigger but **cost and complexity stay low**.
+
+### Render (still valid)
+
+**Render Web Service + Background Worker + Postgres + Cron** is simpler mentally (one platform, long-running process) but typically **not serverless** for the worker—fine if monthly fixed cost is acceptable. Use the same **Postgres checkpoint** pattern either way.
+
+### What is “easiest for the coding agent” (implementation + CI)
+
+A **single TypeScript monorepo**: **Next.js + Drizzle (or Prisma) + Inngest** (or Trigger) + **Neon** gives:
+
+- One `git clone`, one test command, one deploy pipeline.
+- **Checkpoints** you can verify in the workflow UI **and** in SQL.
+- **CI**: GitHub Actions for quality gates; Vercel for deploy—industry default, lots of examples.
+
+Python is fine too, but **Vercel’s first-class story is Node**; mixing is OK (e.g. Python only for a future sidecar) if you accept two runtimes.
+
+### Control flow (all options)
+
+1. **Control plane**: Create campaigns, enqueue “find N,” list/filter people (`has_email`, `has_linkedin`, …).
+2. **Execution plane**: Durable steps or cron chunks run tool-calling (Exa, fetch, Apollo/Clay, upsert).
+3. **Deduplication**: **UPSERT** on email / LinkedIn URL when present before counting toward N.
+4. **Enrichment**: Same pattern—either its own step function or a job type keyed by `person_id`.
 
 ---
 
@@ -151,11 +184,12 @@ Python + FastAPI is equally fine if you prefer; Gmail and Google OAuth have matu
 
 ## Suggested implementation order
 
-1. Render **Blueprint** or manual setup: Web + Worker + Postgres; env vars for Exa, OpenAI, Apollo, Clay (add keys as you subscribe).
-2. Migrations: `companies`, `people`, `campaigns`, `discovery_events`.
-3. Worker: one vertical slice — campaign → Exa + fetch → upsert person (nullable contacts) → optional enrichment tool call.
-4. API: CRUD + **filters** (`has_email`, `has_linkedin`, full-text on name/title).
-5. Phase 2: pgvector, embedding job, Gmail OAuth, draft jobs.
+1. **Repo + Vercel + Neon**: Connect GitHub → Vercel project; create Neon DB; env vars for Exa, OpenAI, Apollo, Clay (as you subscribe). Add **Inngest** (or Trigger.dev) and wire the signing key.
+2. **Migrations**: `companies`, `people`, `campaigns`, `discovery_events`, optional `campaign_runs` / `jobs` for chunk cursors.
+3. **One durable workflow** (or cron chunk handler): campaign → bounded LLM + tools → upsert person (nullable contacts) → optional enrichment step.
+4. **API routes**: CRUD + **filters** (`has_email`, `has_linkedin`, full-text on name/title).
+5. **GitHub Actions**: install → lint → typecheck → test; optionally require green checks before Vercel production deploy.
+6. Phase 2: pgvector, embedding job, Gmail OAuth, draft workflow steps.
 
 ---
 
@@ -164,4 +198,4 @@ Python + FastAPI is equally fine if you prefer; Gmail and Google OAuth have matu
 - **Which enrichment vendor first**: Apollo vs Clay vs both in a waterfall (cost vs coverage)—can be decided at integration time with small eval scripts.
 - **“Qualified” for counting toward N**: Does a person count toward 100 if they have no email but have LinkedIn + strong ICP match? (Default: **yes**, with a separate filter for “ready to email.”)
 
-When you want implementation to start, the next step is scaffolding the Render-friendly repo (API + worker + Drizzle/Prisma migrations) against this schema.
+When you want implementation to start, the next step is scaffolding a **Next.js + Neon + Inngest** (or Trigger) monorepo with the schema above and one end-to-end prospecting workflow with **visible checkpoints** in the workflow dashboard and in Postgres.
