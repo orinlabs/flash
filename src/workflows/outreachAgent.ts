@@ -1085,6 +1085,8 @@ function buildSystemPrompt(): string {
     '- Reach out to that small set once or twice with the strongest angle before moving on.',
     '- Only expand to additional people after the first 1-2 targets are clearly exhausted, unavailable, or a much stronger path appears.',
     '- Prefer quality and continuity over breadth: keep the strategy focused on who you are trying now, why them, and what would make you move to the next person.',
+    '- The current time is included in the account context. Use it when interpreting timeline and draft timestamps.',
+    '- If an email was recently sent and not enough time has passed for the next touch, do not draft the next email yet. Update the strategy if useful, then sleep until the next appropriate send window. If no explicit cadence is saved, wait at least 24 hours after the most recent sent email before drafting another email for this account.',
     '',
     'Record maintenance:',
     '- Use upsert_person when you discover a real named person at this account worth tracking, even if you are not ready to draft to them yet.',
@@ -1121,8 +1123,9 @@ function buildSeedUserMessage(input: {
   events: Awaited<ReturnType<typeof listRecentOutreachEvents>>
   drafts: Awaited<ReturnType<typeof listRecentDrafts>>
   people: Awaited<ReturnType<typeof listPeopleAtCompany>>
+  now: Date
 }): string {
-  const { company, strategy, events, drafts, people: peopleList } = input
+  const { company, strategy, events, drafts, people: peopleList, now } = input
   const mailboxBlock = company.mailbox
     ? [
         `You are sending from: ${company.mailbox.email}` +
@@ -1164,7 +1167,12 @@ function buildSeedUserMessage(input: {
       : 'Timeline (newest first):\n' +
         events
           .slice(0, 15)
-          .map((e) => `- [${e.kind}] ${e.summary}${e.sourceUrl ? ` (${e.sourceUrl})` : ''}`)
+          .map(
+            (e) =>
+              `- ${e.createdAt.toISOString()} [${e.kind}] ${e.summary}${
+                e.sourceUrl ? ` (${e.sourceUrl})` : ''
+              }`
+          )
           .join('\n')
 
   const draftsBlock =
@@ -1175,9 +1183,9 @@ function buildSeedUserMessage(input: {
           .slice(0, 6)
           .map(
             (d) =>
-              `- [${d.status}] to=${d.toEmail} | "${d.subject}"${
-                d.reviewNotes ? ` | user notes: ${d.reviewNotes}` : ''
-              }`
+              `- [${d.status}] to=${d.toEmail} | "${d.subject}" | created_at=${d.createdAt.toISOString()}${
+                d.sentAt ? ` | sent_at=${d.sentAt.toISOString()}` : ''
+              }${d.reviewNotes ? ` | user notes: ${d.reviewNotes}` : ''}`
           )
           .join('\n')
 
@@ -1196,6 +1204,8 @@ function buildSeedUserMessage(input: {
           .join('\n')
 
   return [
+    `Current time: ${now.toISOString()}`,
+    '',
     `Target account: ${company.name}` +
       (company.domain ? ` (${company.domain})` : company.website ? ` (${company.website})` : ''),
     company.industry ? `Industry: ${company.industry}` : '',
@@ -1221,6 +1231,7 @@ function buildSeedUserMessage(input: {
 }
 
 export async function workAccountAgent(input: AgentInput): Promise<WorkAccountAgentResult> {
+  const now = new Date()
   const company = await getCompanyForOutreach(input.companyId)
   if (!company) {
     return { status: 'error', error: `company not found: ${input.companyId}`, steps: 0, draftsCreated: 0 }
@@ -1253,7 +1264,7 @@ export async function workAccountAgent(input: AgentInput): Promise<WorkAccountAg
     { role: 'system', content: buildSystemPrompt() },
     {
       role: 'user',
-      content: buildSeedUserMessage({ company, strategy, events, drafts, people: peopleList })
+      content: buildSeedUserMessage({ company, strategy, events, drafts, people: peopleList, now })
     }
   ]
 

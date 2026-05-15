@@ -27,9 +27,12 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
   const [connectSetupOpen, setConnectSetupOpen] = useState(false)
   const [connectDraftBio, setConnectDraftBio] = useState('')
   const [connectDraftDisplayName, setConnectDraftDisplayName] = useState('')
-  const pendingOauthProfileRef = useRef<{ senderBio: string; displayName: string | null } | null>(
-    null
-  )
+  const [connectDraftEmailPrompt, setConnectDraftEmailPrompt] = useState('')
+  const pendingOauthProfileRef = useRef<{
+    senderBio: string
+    displayName: string | null
+    outreachEmailInstructions: string | null
+  } | null>(null)
 
   useEffect(() => {
     function onMessage(ev: MessageEvent) {
@@ -47,7 +50,10 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
             try {
               await apiPatch<Mailbox>('/mailboxes/' + mailboxId, {
                 senderBio: pending.senderBio,
-                ...(pending.displayName ? { displayName: pending.displayName } : {})
+                ...(pending.displayName ? { displayName: pending.displayName } : {}),
+                ...(pending.outreachEmailInstructions
+                  ? { outreachEmailInstructions: pending.outreachEmailInstructions }
+                  : {})
               })
             } catch (err) {
               setError(
@@ -60,6 +66,7 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
           setConnectSetupOpen(false)
           setConnectDraftBio('')
           setConnectDraftDisplayName('')
+          setConnectDraftEmailPrompt('')
         } else {
           pendingOauthProfileRef.current = null
           if (!ok) {
@@ -86,7 +93,8 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
     setError(null)
     pendingOauthProfileRef.current = {
       senderBio: bio,
-      displayName: connectDraftDisplayName.trim() || null
+      displayName: connectDraftDisplayName.trim() || null,
+      outreachEmailInstructions: connectDraftEmailPrompt.trim() || null
     }
     setConnecting(true)
     try {
@@ -108,7 +116,7 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
       pendingOauthProfileRef.current = null
       setError(err instanceof Error ? err.message : 'Failed to start OAuth')
     }
-  }, [connectDraftBio, connectDraftDisplayName])
+  }, [connectDraftBio, connectDraftDisplayName, connectDraftEmailPrompt])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
@@ -137,7 +145,7 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
         <div className="border-b border-line bg-surface-muted/30 px-5 py-4">
           <p className="mb-3 text-sm font-medium text-ink">Before Gmail connects</p>
           <p className="mb-4 text-xs text-ink-muted">
-            The outreach agent needs a sender bio (who you are, what you pitch, tone). This is required and cannot be skipped.
+            The outreach agent needs a sender bio. You can also add an editable mailbox prompt for how it should write emails from this address.
           </p>
           <div className="grid max-w-3xl grid-cols-1 gap-4 md:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -162,6 +170,20 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
               />
               <p className="text-2xs text-ink-faint">
                 {connectDraftBio.trim().length}/{MIN_SENDER_BIO} characters minimum
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <label className="text-2xs font-medium uppercase tracking-wide text-ink-faint">
+                AI email prompt (optional)
+              </label>
+              <Textarea
+                value={connectDraftEmailPrompt}
+                onChange={(e) => setConnectDraftEmailPrompt(e.target.value)}
+                placeholder="Example: Write concise, plainspoken outbound emails. Keep subject lines boring and specific. Lead with sourced context. Avoid hype, emojis, and em dashes."
+                className="min-h-[120px]"
+              />
+              <p className="text-2xs text-ink-faint">
+                This prompt is sent to the AI for every email drafted from this mailbox.
               </p>
             </div>
           </div>
@@ -232,6 +254,7 @@ function MailboxRow({
   const [displayName, setDisplayName] = useState(mailbox.displayName ?? '')
   const [signature, setSignature] = useState(mailbox.signature ?? '')
   const [senderBio, setSenderBio] = useState(mailbox.senderBio ?? '')
+  const [emailPrompt, setEmailPrompt] = useState(mailbox.outreachEmailInstructions ?? '')
   const [saving, setSaving] = useState(false)
   const [removing, setRemoving] = useState(false)
 
@@ -247,7 +270,8 @@ function MailboxRow({
       await apiPatch<Mailbox>('/mailboxes/' + mailbox.id, {
         displayName: displayName || null,
         signature,
-        senderBio: bio
+        senderBio: bio,
+        outreachEmailInstructions: emailPrompt.trim() || null
       })
       onSaved()
     } catch (err) {
@@ -349,6 +373,20 @@ function MailboxRow({
               className="min-h-[88px]"
             />
           </div>
+          <div className="flex flex-col gap-1.5 md:col-span-2">
+            <label className="text-2xs font-medium uppercase tracking-wide text-ink-faint">
+              AI email prompt
+            </label>
+            <Textarea
+              value={emailPrompt}
+              onChange={(e) => setEmailPrompt(e.target.value)}
+              placeholder="Example: Write concise, plainspoken outbound emails. Keep subject lines boring and specific. Lead with sourced context. Avoid hype, emojis, and em dashes."
+              className="min-h-[140px]"
+            />
+            <p className="text-2xs text-ink-faint">
+              Used as mailbox-wide instructions whenever the AI drafts emails from this address.
+            </p>
+          </div>
           <div className="md:col-span-2 flex justify-end gap-2">
             <Button variant="outline" size="md" onClick={onEdit}>
               Cancel
@@ -359,7 +397,11 @@ function MailboxRow({
           </div>
         </div>
       ) : (
-        <Preview senderBio={mailbox.senderBio} signature={mailbox.signature} />
+        <Preview
+          senderBio={mailbox.senderBio}
+          signature={mailbox.signature}
+          emailPrompt={mailbox.outreachEmailInstructions}
+        />
       )}
     </li>
   )
@@ -367,12 +409,14 @@ function MailboxRow({
 
 function Preview({
   senderBio,
-  signature
+  signature,
+  emailPrompt
 }: {
   senderBio: string | null
   signature: string | null
+  emailPrompt: string | null
 }) {
-  const hasContent = Boolean(senderBio?.trim() || signature?.trim())
+  const hasContent = Boolean(senderBio?.trim() || signature?.trim() || emailPrompt?.trim())
   const preview = useMemo(() => {
     if (!hasContent) return null
     return (
@@ -395,8 +439,16 @@ function Preview({
             </pre>
           </section>
         ) : null}
+        {emailPrompt ? (
+          <section className="rounded-md border border-line bg-surface-muted/40 p-3 md:col-span-2">
+            <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-ink-faint">
+              AI email prompt
+            </div>
+            <p className="whitespace-pre-wrap text-sm text-ink">{emailPrompt}</p>
+          </section>
+        ) : null}
       </div>
     )
-  }, [senderBio, signature, hasContent])
+  }, [senderBio, signature, emailPrompt, hasContent])
   return preview
 }
