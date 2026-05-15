@@ -204,6 +204,49 @@ export const discoveryEvents = pgTable(
   ]
 )
 
+export const appUsers = pgTable(
+  'app_users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true })
+  },
+  (t) => [index('app_users_created_idx').on(t.createdAt)]
+)
+
+export const emailLoginChallenges = pgTable(
+  'email_login_challenges',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    codeHash: text('code_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    index('email_login_challenges_email_idx').on(t.email),
+    index('email_login_challenges_expires_idx').on(t.expiresAt)
+  ]
+)
+
+export const appSessions = pgTable(
+  'app_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => appUsers.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    index('app_sessions_user_idx').on(t.userId),
+    index('app_sessions_expires_idx').on(t.expiresAt)
+  ]
+)
+
 export const usageEvents = pgTable(
   'usage_events',
   {
@@ -250,3 +293,5 @@ export type UsageEvent = typeof usageEvents.$inferSelect
 export type Mailbox = typeof mailboxes.$inferSelect
 export type OutreachEvent = typeof outreachEvents.$inferSelect
 export type OutreachDraft = typeof outreachDrafts.$inferSelect
+export type AppUser = typeof appUsers.$inferSelect
+export type AppSession = typeof appSessions.$inferSelect

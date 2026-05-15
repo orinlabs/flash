@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, lte, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm'
 
 import { db } from '../db/client.js'
 import {
@@ -216,7 +216,7 @@ export async function startWorkingCompanies(
       outreachNextWakeAt: new Date(),
       updatedAt: new Date()
     })
-    .where(sql`${companies.id} = ANY(${companyIds}::uuid[])`)
+    .where(inArray(companies.id, companyIds))
     .returning({ id: companies.id })
   return result.length
 }
