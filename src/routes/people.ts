@@ -9,7 +9,7 @@ import { requiredEnv } from '../workflows/repo.js'
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const AGENTIC_PEOPLE_SEARCH_MODEL = 'openai/gpt-5-nano'
-const AGENTIC_PEOPLE_SEARCH_CONCURRENCY = 12
+const AGENTIC_PEOPLE_SEARCH_CONCURRENCY = 50
 
 const discoveryCampaignIdsCol = sql<
   string[]
