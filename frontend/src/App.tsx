@@ -1,4 +1,5 @@
 import {
+  Activity,
   Building2,
   Mail,
   Plus,
@@ -14,7 +15,9 @@ import {
   type Campaign,
   type CampaignRun,
   type Company,
-  type Person
+  type Person,
+  type UsageByCampaignRow,
+  type UsageByRunRow
 } from '@/api'
 import { CommandPalette, type CommandItem } from '@/components/CommandPalette'
 import { AppShell } from '@/components/layout/AppShell'
@@ -27,8 +30,9 @@ import { CompaniesPage } from '@/pages/CompaniesPage'
 import { CrawlsPage } from '@/pages/CrawlsPage'
 import { DetailDrawer } from '@/pages/DetailDrawer'
 import { PeoplePage } from '@/pages/PeoplePage'
+import { UsagePage } from '@/pages/UsagePage'
 
-type TabId = 'people' | 'companies' | 'crawls' | 'campaigns'
+type TabId = 'people' | 'companies' | 'crawls' | 'campaigns' | 'usage'
 type DetailSelection =
   | { type: 'person'; id: string }
   | { type: 'company'; id: string }
@@ -51,6 +55,10 @@ const sections: SidebarSection<TabId>[] = [
       { id: 'crawls', label: 'Crawls', icon: Search },
       { id: 'campaigns', label: 'Campaigns', icon: Mail }
     ]
+  },
+  {
+    label: 'Operations',
+    items: [{ id: 'usage', label: 'Usage', icon: Activity }]
   }
 ]
 
@@ -58,7 +66,11 @@ const headerCopy: Record<TabId, { title: string; description: string }> = {
   people: { title: 'People', description: 'Prospects discovered from crawls.' },
   companies: { title: 'Companies', description: 'Accounts found during research.' },
   crawls: { title: 'Crawls', description: 'ICP research jobs and workflow runs.' },
-  campaigns: { title: 'Campaigns', description: 'Email campaigns and drafts.' }
+  campaigns: { title: 'Campaigns', description: 'Email campaigns and drafts.' },
+  usage: {
+    title: 'Usage',
+    description: 'Spend, tokens, and call volume across crawls and accounts.'
+  }
 }
 
 export default function App() {
@@ -79,6 +91,12 @@ export default function App() {
     Record<string, CampaignRun[]>
   >({})
   const [crawlRunsLoading, setCrawlRunsLoading] = useState(false)
+  const [crawlUsageByCrawlId, setCrawlUsageByCrawlId] = useState<
+    Record<
+      string,
+      { totals: UsageByCampaignRow | null; runs: UsageByRunRow[] } | undefined
+    >
+  >({})
   const [paletteOpen, setPaletteOpen] = useState(false)
 
   const [name, setName] = useState('My ICP run')
@@ -96,8 +114,20 @@ export default function App() {
   const loadCrawlRuns = useCallback(async (crawlId: string) => {
     setCrawlRunsLoading(true)
     try {
-      const runs = await apiGet<CampaignRun[]>('/campaigns/' + crawlId + '/runs')
+      const [runs, byCampaign, byRun] = await Promise.all([
+        apiGet<CampaignRun[]>('/campaigns/' + crawlId + '/runs'),
+        apiGet<{ data: UsageByCampaignRow[] }>('/usage/by-campaign'),
+        apiGet<{ data: UsageByRunRow[] }>(
+          '/usage/by-run?campaign_id=' + crawlId
+        )
+      ])
       setCrawlRunsByCrawlId((current) => ({ ...current, [crawlId]: runs }))
+      const totals =
+        byCampaign.data.find((r) => r.campaignId === crawlId) ?? null
+      setCrawlUsageByCrawlId((current) => ({
+        ...current,
+        [crawlId]: { totals, runs: byRun.data }
+      }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load runs')
     } finally {
@@ -225,6 +255,9 @@ export default function App() {
   const selectedCrawlRuns = selectedCrawl
     ? (crawlRunsByCrawlId[selectedCrawl.id] ?? [])
     : []
+  const selectedCrawlUsage = selectedCrawl
+    ? (crawlUsageByCrawlId[selectedCrawl.id] ?? null)
+    : null
 
   useEffect(() => {
     if (detail?.type !== 'crawl') return
@@ -280,6 +313,14 @@ export default function App() {
         icon: Mail,
         keywords: 'outreach emails',
         onSelect: () => setActiveTab('campaigns')
+      },
+      {
+        id: 'nav:usage',
+        label: 'Go to Usage',
+        group: 'Jump to',
+        icon: Activity,
+        keywords: 'spend cost tokens billing',
+        onSelect: () => setActiveTab('usage')
       }
     ]
 
@@ -388,6 +429,8 @@ export default function App() {
             New campaign
           </Button>
         )
+      case 'usage':
+        return null
     }
   })()
 
@@ -472,6 +515,17 @@ export default function App() {
         <CampaignsPage onGoToCrawls={() => setActiveTab('crawls')} />
       ) : null}
 
+      {activeTab === 'usage' ? (
+        <UsagePage
+          crawls={crawls}
+          companyById={companyById}
+          personById={personById}
+          onSelectCrawl={(crawl) => setDetail({ type: 'crawl', id: crawl.id })}
+          onSelectCompany={(companyId) => setDetail({ type: 'company', id: companyId })}
+          onSelectPerson={(person) => setDetail({ type: 'person', id: person.id })}
+        />
+      ) : null}
+
       <DetailDrawer
         open={drawerOpen}
         onOpenChange={(open) => {
@@ -484,6 +538,7 @@ export default function App() {
         crawlPeople={selectedCrawlPeople}
         crawlRuns={selectedCrawlRuns}
         crawlRunsLoading={crawlRunsLoading}
+        crawlUsage={selectedCrawlUsage}
         runningId={runningId}
         onSelectPerson={(person) => setDetail({ type: 'person', id: person.id })}
         onSelectCompany={(companyId) => setDetail({ type: 'company', id: companyId })}

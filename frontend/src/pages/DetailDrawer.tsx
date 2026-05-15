@@ -14,9 +14,23 @@ import {
   DrawerTabsTrigger
 } from '@/components/ui/drawer'
 import { StatusDot, statusToTone } from '@/components/ui/status-dot'
-import { domainFromUrl, faviconUrl, formatDate, formatRelative } from '@/lib/format'
+import {
+  domainFromUrl,
+  faviconUrl,
+  formatDate,
+  formatRelative,
+  formatTokens,
+  formatUsd
+} from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { Campaign, CampaignRun, Company, Person } from '@/api'
+import type {
+  Campaign,
+  CampaignRun,
+  Company,
+  Person,
+  UsageByCampaignRow,
+  UsageByRunRow
+} from '@/api'
 
 interface Props {
   open: boolean
@@ -28,6 +42,7 @@ interface Props {
   crawlPeople: Person[]
   crawlRuns: CampaignRun[]
   crawlRunsLoading: boolean
+  crawlUsage: { totals: UsageByCampaignRow | null; runs: UsageByRunRow[] } | null
   runningId: string | null
   onSelectPerson: (person: Person) => void
   onSelectCompany: (companyId: string) => void
@@ -44,6 +59,7 @@ export function DetailDrawer({
   crawlPeople,
   crawlRuns,
   crawlRunsLoading,
+  crawlUsage,
   runningId,
   onSelectPerson,
   onSelectCompany,
@@ -132,6 +148,7 @@ export function DetailDrawer({
             runs={crawlRuns}
             runsLoading={crawlRunsLoading}
             people={crawlPeople}
+            usage={crawlUsage}
             onSelectPerson={onSelectPerson}
           />
         ) : null}
@@ -353,15 +370,24 @@ function CrawlView({
   runs,
   runsLoading,
   people,
+  usage,
   onSelectPerson
 }: {
   crawl: Campaign
   runs: CampaignRun[]
   runsLoading: boolean
   people: Person[]
+  usage: { totals: UsageByCampaignRow | null; runs: UsageByRunRow[] } | null
   onSelectPerson: (person: Person) => void
 }) {
   const totalQualified = runs.reduce((acc, r) => acc + (r.qualifiedCount ?? 0), 0)
+  const usageByRunId = new Map(
+    (usage?.runs ?? [])
+      .filter((r): r is UsageByRunRow & { campaignRunId: string } =>
+        Boolean(r.campaignRunId)
+      )
+      .map((r) => [r.campaignRunId, r] as const)
+  )
   return (
     <DrawerTabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
       <DrawerTabsList>
@@ -428,6 +454,43 @@ function CrawlView({
               }
             />
           </SectionCard>
+
+          <SectionCard title="Usage">
+            <KV
+              label="Spend"
+              value={
+                <span className="font-mono tabular text-[12.5px] text-ink">
+                  {formatUsd(usage?.totals?.costUsd ?? 0)}
+                </span>
+              }
+            />
+            <KV
+              label="Tokens"
+              value={
+                <span className="font-mono tabular text-[12.5px] text-ink-muted">
+                  {formatTokens(usage?.totals?.totalTokens ?? 0)}
+                </span>
+              }
+            />
+            <KV
+              label="Events"
+              value={
+                <span className="font-mono tabular text-[12.5px] text-ink-muted">
+                  {usage?.totals?.events ?? 0}
+                </span>
+              }
+            />
+            {people.length > 0 && usage?.totals ? (
+              <KV
+                label="$ / person"
+                value={
+                  <span className="font-mono tabular text-[12.5px] text-ink-muted">
+                    {formatUsd(Number(usage.totals.costUsd) / people.length)}
+                  </span>
+                }
+              />
+            ) : null}
+          </SectionCard>
         </DrawerBody>
       </DrawerTabsContent>
 
@@ -445,7 +508,12 @@ function CrawlView({
           ) : (
             <div className="space-y-3">
               {runs.map((run, idx) => (
-                <RunRow run={run} index={runs.length - idx} key={run.id} />
+                <RunRow
+                  run={run}
+                  index={runs.length - idx}
+                  usage={usageByRunId.get(run.id) ?? null}
+                  key={run.id}
+                />
               ))}
             </div>
           )}
@@ -491,7 +559,15 @@ function CrawlView({
   )
 }
 
-function RunRow({ run, index }: { run: CampaignRun; index: number }) {
+function RunRow({
+  run,
+  index,
+  usage
+}: {
+  run: CampaignRun
+  index: number
+  usage: UsageByRunRow | null
+}) {
   const tone = statusToTone(run.status)
   const checkpointStep =
     typeof run.checkpoint?.step === 'string' ? (run.checkpoint.step as string) : null
@@ -510,12 +586,28 @@ function RunRow({ run, index }: { run: CampaignRun; index: number }) {
         </span>
       </header>
       <div className="px-4 py-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           <Stat
             label="Qualified"
             value={
               <span className="font-mono tabular text-sm text-ink">
                 {run.qualifiedCount}
+              </span>
+            }
+          />
+          <Stat
+            label="Cost"
+            value={
+              <span className="font-mono tabular text-sm text-ink">
+                {formatUsd(usage?.costUsd ?? 0)}
+              </span>
+            }
+          />
+          <Stat
+            label="Tokens"
+            value={
+              <span className="font-mono tabular text-sm text-ink-muted">
+                {formatTokens(usage?.totalTokens ?? 0)}
               </span>
             }
           />

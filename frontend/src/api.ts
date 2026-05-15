@@ -62,6 +62,85 @@ export type Company = {
   updatedAt: string
 }
 
+export type UsageTotals = {
+  events: number
+  costUsd: string
+  promptTokens: string
+  completionTokens: string
+  totalTokens: string
+  units: string
+}
+
+export type UsageOverall = UsageTotals
+
+export type UsageProviderBreakdown = UsageTotals & {
+  provider: string
+  operation: string
+}
+
+export type UsageModelBreakdown = UsageTotals & {
+  model: string | null
+}
+
+export type UsageSummaryResponse = {
+  days: number | null
+  overall: UsageOverall
+  byProvider: UsageProviderBreakdown[]
+  byModel: UsageModelBreakdown[]
+}
+
+export type UsageByCampaignRow = UsageTotals & {
+  campaignId: string | null
+  campaignName: string | null
+  campaignStatus: string | null
+}
+
+export type UsageByCompanyRow = UsageTotals & {
+  companyId: string | null
+  companyName: string | null
+  companyDomain: string | null
+}
+
+export type UsageByPersonRow = UsageTotals & {
+  personId: string | null
+  personName: string | null
+  personTitle: string | null
+  companyId: string | null
+  companyName: string | null
+}
+
+export type UsageByRunRow = UsageTotals & {
+  campaignRunId: string | null
+  campaignId: string | null
+  campaignName: string | null
+  runStatus: string | null
+  runCreatedAt: string | null
+  qualifiedCount: number | null
+}
+
+export type UsageEvent = {
+  id: string
+  provider: string
+  operation: string
+  model: string | null
+  promptTokens: number | null
+  completionTokens: number | null
+  totalTokens: number | null
+  units: number | null
+  costUsd: string | null
+  estimated: boolean
+  campaignId: string | null
+  campaignRunId: string | null
+  companyId: string | null
+  personId: string | null
+  slotIndex: number | null
+  metadata: Record<string, unknown> | null
+  createdAt: string
+  campaignName: string | null
+  personName: string | null
+  companyName: string | null
+}
+
 export type Person = {
   id: string
   companyId: string | null

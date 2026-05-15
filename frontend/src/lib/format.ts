@@ -48,6 +48,32 @@ export function formatRelative(value: string | null | undefined): string | null 
   }
 }
 
+export function formatUsd(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return '$0.00'
+  const n = typeof value === 'string' ? Number(value) : value
+  if (!Number.isFinite(n)) return '$0.00'
+  if (n === 0) return '$0.00'
+  if (Math.abs(n) < 0.01) return `$${n.toFixed(4)}`
+  if (Math.abs(n) < 1) return `$${n.toFixed(3)}`
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+export function formatNumber(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return '0'
+  const n = typeof value === 'string' ? Number(value) : value
+  if (!Number.isFinite(n)) return '0'
+  return n.toLocaleString()
+}
+
+export function formatTokens(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return '0'
+  const n = typeof value === 'string' ? Number(value) : value
+  if (!Number.isFinite(n) || n === 0) return '0'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return n.toLocaleString()
+}
+
 export function formatDate(value: string | null | undefined): string | null {
   if (!value) return null
   const d = new Date(value)

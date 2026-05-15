@@ -11,6 +11,7 @@ import { db, pool } from './db/client.js'
 import { campaignsRoutes } from './routes/campaigns.js'
 import { companiesRoutes } from './routes/companies.js'
 import { peopleRoutes } from './routes/people.js'
+import { usageRoutes } from './routes/usage.js'
 
 const app = new Hono()
 
@@ -34,6 +35,7 @@ app.get('/ready', async (c) => {
 app.route('/campaigns', campaignsRoutes)
 app.route('/companies', companiesRoutes)
 app.route('/people', peopleRoutes)
+app.route('/usage', usageRoutes)
 
 async function runMigrations(): Promise<void> {
   if (!process.env.DATABASE_URL) {

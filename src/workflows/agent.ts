@@ -1,9 +1,12 @@
+import { estimateChatCostUsd } from '../lib/pricing.js'
+import { attributeUsageToPerson, recordUsageEvent } from '../lib/usage.js'
 import {
   exaFetchUrl,
   exaSearch,
   getCampaignDiscoveredPersonIds,
   getCompany,
   getPerson,
+  getPersonCompanyId,
   recordDiscoveryEvent,
   requiredEnv,
   searchCompanies,
@@ -41,6 +44,12 @@ type OpenRouterResponse = {
       refusal?: string
     }
   }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+    cost?: number
+  }
   error?: { message?: string }
 }
 
@@ -544,6 +553,10 @@ async function dispatchTool(
 
         if (!result.ok) {
           if (result.reason === 'duplicate') {
+            // Attribute the slot's usage to the matched person so we can see
+            // how much we spent re-discovering somebody we already had.
+            const dupCompanyId = await getPersonCompanyId(result.personId)
+            await attributeUsageToPerson(result.personId, dupCompanyId)
             return {
               kind: 'terminate_duplicate',
               personId: result.personId,
@@ -560,6 +573,8 @@ async function dispatchTool(
             content: JSON.stringify({ error: result.reason, message: result.message })
           }
         }
+
+        await attributeUsageToPerson(result.personId, companyId)
 
         const sourceUrl =
           (typeof args.source_url === 'string' ? args.source_url : null) ?? ctx.lastSourceUrlHinted
@@ -617,7 +632,10 @@ async function callOpenRouter(messages: ChatMessage[]): Promise<{
       messages,
       tools: TOOLS,
       tool_choice: 'auto',
-      parallel_tool_calls: false
+      parallel_tool_calls: false,
+      // Ask OpenRouter to include real cost in the response. We still fall
+      // back to a per-token estimate if the field is missing.
+      usage: { include: true }
     })
   })
 
@@ -634,6 +652,27 @@ async function callOpenRouter(messages: ChatMessage[]): Promise<{
   if (message?.refusal) {
     throw new Error(`Model refused: ${message.refusal}`)
   }
+
+  const usage = payload.usage
+  if (usage) {
+    const promptTokens = usage.prompt_tokens ?? 0
+    const completionTokens = usage.completion_tokens ?? 0
+    const reportedCost = typeof usage.cost === 'number' ? usage.cost : null
+    const costUsd =
+      reportedCost ?? estimateChatCostUsd(model, promptTokens, completionTokens)
+    await recordUsageEvent({
+      provider: 'openrouter',
+      operation: 'chat_completion',
+      model,
+      promptTokens,
+      completionTokens,
+      totalTokens: usage.total_tokens ?? promptTokens + completionTokens,
+      costUsd,
+      estimated: reportedCost == null,
+      metadata: { finishReason: choice?.finish_reason ?? null }
+    })
+  }
+
   return {
     toolCalls: message?.tool_calls ?? [],
     text: message?.content ?? null,

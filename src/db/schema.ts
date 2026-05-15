@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -119,8 +121,46 @@ export const discoveryEvents = pgTable(
   ]
 )
 
+export const usageEvents = pgTable(
+  'usage_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    provider: text('provider').notNull(),
+    operation: text('operation').notNull(),
+    model: text('model'),
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
+    totalTokens: integer('total_tokens'),
+    units: integer('units'),
+    costUsd: numeric('cost_usd', { precision: 14, scale: 6 }),
+    estimated: boolean('estimated').notNull().default(false),
+    campaignId: uuid('campaign_id').references(() => campaigns.id, {
+      onDelete: 'set null'
+    }),
+    campaignRunId: uuid('campaign_run_id').references(() => campaignRuns.id, {
+      onDelete: 'set null'
+    }),
+    companyId: uuid('company_id').references(() => companies.id, {
+      onDelete: 'set null'
+    }),
+    personId: uuid('person_id').references(() => people.id, { onDelete: 'set null' }),
+    slotIndex: integer('slot_index'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    index('usage_events_campaign_idx').on(t.campaignId),
+    index('usage_events_run_idx').on(t.campaignRunId),
+    index('usage_events_company_idx').on(t.companyId),
+    index('usage_events_person_idx').on(t.personId),
+    index('usage_events_provider_idx').on(t.provider),
+    index('usage_events_created_idx').on(t.createdAt)
+  ]
+)
+
 export type Company = typeof companies.$inferSelect
 export type Person = typeof people.$inferSelect
 export type Campaign = typeof campaigns.$inferSelect
 export type CampaignRun = typeof campaignRuns.$inferSelect
 export type DiscoveryEvent = typeof discoveryEvents.$inferSelect
+export type UsageEvent = typeof usageEvents.$inferSelect

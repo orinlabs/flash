@@ -1,5 +1,6 @@
 import { task } from '@renderinc/sdk/workflows'
 
+import { withUsageContext } from '../lib/usage.js'
 import { findPersonAgent, type FindPersonAgentResult } from './agent.js'
 import {
   getCampaignDiscoveredPersonIds,
@@ -36,14 +37,22 @@ export const findOneProspect = task(
     retry: { maxRetries: 1, waitDurationMs: 2000, backoffScaling: 2 }
   },
   async function findOneProspect(input: SlotInput): Promise<SlotResult> {
-    const result = await findPersonAgent({
-      campaignId: input.campaignId,
-      campaignRunId: input.campaignRunId,
-      campaignName: input.campaignName,
-      icpDocument: input.icpDocument,
-      slotIndex: input.slotIndex,
-      totalSlots: input.totalSlots
-    })
+    const result = await withUsageContext(
+      {
+        campaignId: input.campaignId,
+        campaignRunId: input.campaignRunId,
+        slotIndex: input.slotIndex
+      },
+      () =>
+        findPersonAgent({
+          campaignId: input.campaignId,
+          campaignRunId: input.campaignRunId,
+          campaignName: input.campaignName,
+          icpDocument: input.icpDocument,
+          slotIndex: input.slotIndex,
+          totalSlots: input.totalSlots
+        })
+    )
     return { slotIndex: input.slotIndex, result }
   }
 )

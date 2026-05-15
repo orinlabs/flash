@@ -2,6 +2,8 @@ import { and, desc, eq, ilike, or, sql } from 'drizzle-orm'
 
 import { db } from '../db/client.js'
 import { campaignRuns, campaigns, companies, discoveryEvents, people } from '../db/schema.js'
+import { EXA_CONTENTS_COST_USD, EXA_SEARCH_COST_USD } from '../lib/pricing.js'
+import { recordUsageEvent } from '../lib/usage.js'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -113,7 +115,7 @@ export async function exaSearch(query: string, numResults: number): Promise<ExaR
     }>
   }
 
-  return (payload.results ?? [])
+  const mapped = (payload.results ?? [])
     .filter((r) => r.url)
     .map((r) => ({
       title: r.title ?? null,
@@ -122,6 +124,17 @@ export async function exaSearch(query: string, numResults: number): Promise<ExaR
       highlights: r.highlights ?? [],
       text: r.text ?? null
     }))
+
+  await recordUsageEvent({
+    provider: 'exa',
+    operation: 'search',
+    units: mapped.length,
+    costUsd: EXA_SEARCH_COST_USD,
+    estimated: true,
+    metadata: { query, requestedNumResults: numResults }
+  })
+
+  return mapped
 }
 
 export async function exaFetchUrl(url: string): Promise<{ text: string | null; title: string | null }> {
@@ -143,6 +156,16 @@ export async function exaFetchUrl(url: string): Promise<{ text: string | null; t
     results?: Array<{ title?: string | null; text?: string | null }>
   }
   const first = payload.results?.[0]
+
+  await recordUsageEvent({
+    provider: 'exa',
+    operation: 'contents',
+    units: 1,
+    costUsd: EXA_CONTENTS_COST_USD,
+    estimated: true,
+    metadata: { url }
+  })
+
   return { title: first?.title ?? null, text: first?.text ?? null }
 }
 
@@ -285,6 +308,15 @@ export async function searchCompanies(input: {
 export async function getCompany(id: string) {
   const [row] = await db.select().from(companies).where(eq(companies.id, id)).limit(1)
   return row ?? null
+}
+
+export async function getPersonCompanyId(personId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ companyId: people.companyId })
+    .from(people)
+    .where(eq(people.id, personId))
+    .limit(1)
+  return row?.companyId ?? null
 }
 
 // ---------- Upsert helpers ----------
