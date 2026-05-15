@@ -1,0 +1,14 @@
+{
+  "name": "icp-prospector",
+  "private": true,
+  "version": "0.0.1",
+  "description": "ICP prospecting API (Render web service shell)",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "build": "node -e \"console.log('no build yet')\""
+  }
+}
