@@ -12,9 +12,11 @@ import {
   apiGet,
   apiPost,
   type Campaign,
+  type CampaignRun,
   type Company,
   type Person
 } from '@/api'
+import { CommandPalette, type CommandItem } from '@/components/CommandPalette'
 import { AppShell } from '@/components/layout/AppShell'
 import type { SidebarSection } from '@/components/layout/Sidebar'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -30,6 +32,7 @@ type TabId = 'people' | 'companies' | 'crawls' | 'campaigns'
 type DetailSelection =
   | { type: 'person'; id: string }
   | { type: 'company'; id: string }
+  | { type: 'crawl'; id: string }
 type PagedResponse<T> = { data: T[]; limit: number; offset: number }
 
 const PAGE_SIZE = 100
@@ -72,6 +75,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [runningId, setRunningId] = useState<string | null>(null)
+  const [crawlRunsByCrawlId, setCrawlRunsByCrawlId] = useState<
+    Record<string, CampaignRun[]>
+  >({})
+  const [crawlRunsLoading, setCrawlRunsLoading] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
 
   const [name, setName] = useState('My ICP run')
   const [icpDocument, setIcpDocument] = useState(
@@ -83,6 +91,18 @@ export default function App() {
     setError(null)
     const data = await apiGet<Campaign[]>('/campaigns')
     setCrawls(data)
+  }, [])
+
+  const loadCrawlRuns = useCallback(async (crawlId: string) => {
+    setCrawlRunsLoading(true)
+    try {
+      const runs = await apiGet<CampaignRun[]>('/campaigns/' + crawlId + '/runs')
+      setCrawlRunsByCrawlId((current) => ({ ...current, [crawlId]: runs }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load runs')
+    } finally {
+      setCrawlRunsLoading(false)
+    }
   }, [])
 
   const loadPeople = useCallback(async (offset = 0) => {
@@ -157,6 +177,7 @@ export default function App() {
         '/campaigns/' + crawlId + '/runs'
       )
       await loadCrawls()
+      await loadCrawlRuns(crawlId)
       await loadPeople(0)
       await loadCompanies(0)
     } catch (err) {
@@ -174,6 +195,10 @@ export default function App() {
     () => new Map(people.map((person) => [person.id, person])),
     [people]
   )
+  const crawlById = useMemo(
+    () => new Map(crawls.map((c) => [c.id, c])),
+    [crawls]
+  )
 
   const selectedPerson =
     detail?.type === 'person' ? (personById.get(detail.id) ?? null) : null
@@ -187,6 +212,115 @@ export default function App() {
     : selectedPerson?.companyId
       ? people.filter((p) => p.companyId === selectedPerson.companyId)
       : []
+
+  const selectedCrawl =
+    detail?.type === 'crawl' ? (crawlById.get(detail.id) ?? null) : null
+  const selectedCrawlPeople = useMemo(
+    () =>
+      selectedCrawl
+        ? people.filter((p) => p.firstSeenCampaignId === selectedCrawl.id)
+        : [],
+    [selectedCrawl, people]
+  )
+  const selectedCrawlRuns = selectedCrawl
+    ? (crawlRunsByCrawlId[selectedCrawl.id] ?? [])
+    : []
+
+  useEffect(() => {
+    if (detail?.type !== 'crawl') return
+    void loadCrawlRuns(detail.id)
+  }, [detail, loadCrawlRuns])
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const cmdOrCtrl = e.metaKey || e.ctrlKey
+      if (cmdOrCtrl && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault()
+        setPaletteOpen((open) => !open)
+        return
+      }
+      if (e.key === 'Escape' && !paletteOpen && detail) {
+        setDetail(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [paletteOpen, detail])
+
+  const paletteCommands = useMemo<CommandItem[]>(() => {
+    const navItems: CommandItem[] = [
+      {
+        id: 'nav:people',
+        label: 'Go to People',
+        group: 'Jump to',
+        icon: Users,
+        keywords: 'prospects contacts',
+        onSelect: () => setActiveTab('people')
+      },
+      {
+        id: 'nav:companies',
+        label: 'Go to Companies',
+        group: 'Jump to',
+        icon: Building2,
+        keywords: 'accounts',
+        onSelect: () => setActiveTab('companies')
+      },
+      {
+        id: 'nav:crawls',
+        label: 'Go to Crawls',
+        group: 'Jump to',
+        icon: Search,
+        keywords: 'jobs workflows research',
+        onSelect: () => setActiveTab('crawls')
+      },
+      {
+        id: 'nav:campaigns',
+        label: 'Go to Campaigns',
+        group: 'Jump to',
+        icon: Mail,
+        keywords: 'outreach emails',
+        onSelect: () => setActiveTab('campaigns')
+      }
+    ]
+
+    const peopleItems: CommandItem[] = people.map((p) => {
+      const company = p.companyId ? companyById.get(p.companyId) : null
+      const description = [p.title, company?.name].filter(Boolean).join(' - ')
+      return {
+        id: 'person:' + p.id,
+        label: p.fullName ?? p.email ?? 'Unnamed person',
+        description: description || undefined,
+        group: 'People',
+        icon: Users,
+        keywords: [p.email, p.title, company?.name, company?.domain]
+          .filter(Boolean)
+          .join(' '),
+        onSelect: () => setDetail({ type: 'person', id: p.id })
+      }
+    })
+
+    const companyItems: CommandItem[] = companies.map((c) => ({
+      id: 'company:' + c.id,
+      label: c.name,
+      description: c.domain ?? c.website ?? undefined,
+      group: 'Companies',
+      icon: Building2,
+      keywords: [c.domain, c.website, c.industry, c.hqLocation].filter(Boolean).join(' '),
+      onSelect: () => setDetail({ type: 'company', id: c.id })
+    }))
+
+    const crawlItems: CommandItem[] = crawls.map((c) => ({
+      id: 'crawl:' + c.id,
+      label: c.name,
+      description: c.status,
+      group: 'Crawls',
+      icon: Search,
+      keywords: c.status,
+      onSelect: () => setDetail({ type: 'crawl', id: c.id })
+    }))
+
+    return [...navItems, ...crawlItems, ...companyItems, ...peopleItems]
+  }, [people, companies, crawls, companyById])
 
   function loadMorePeople() {
     if (!peopleLoading && peopleHasMore) void loadPeople(people.length)
@@ -262,6 +396,7 @@ export default function App() {
       sections={sections}
       activeId={activeTab}
       onSelect={setActiveTab}
+      onOpenSearch={() => setPaletteOpen(true)}
       sidebarFooter={
         <div className="text-2xs leading-relaxed text-ink-faint">
           <div className="font-medium text-ink-muted">v0.1 - preview</div>
@@ -328,6 +463,8 @@ export default function App() {
           onCreate={handleCreate}
           onRun={startRun}
           onRefresh={() => void loadCrawls()}
+          onSelectCrawl={(crawl) => setDetail({ type: 'crawl', id: crawl.id })}
+          selectedKey={selectedKey}
         />
       ) : null}
 
@@ -342,9 +479,21 @@ export default function App() {
         }}
         person={selectedPerson}
         company={selectedCompany}
+        crawl={selectedCrawl}
         companyPeople={selectedCompanyPeople}
+        crawlPeople={selectedCrawlPeople}
+        crawlRuns={selectedCrawlRuns}
+        crawlRunsLoading={crawlRunsLoading}
+        runningId={runningId}
         onSelectPerson={(person) => setDetail({ type: 'person', id: person.id })}
         onSelectCompany={(companyId) => setDetail({ type: 'company', id: companyId })}
+        onRunCrawl={startRun}
+      />
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        commands={paletteCommands}
       />
     </AppShell>
   )

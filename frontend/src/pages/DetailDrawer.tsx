@@ -1,7 +1,8 @@
-import { ExternalLink, Globe, MapPin } from 'lucide-react'
+import { ExternalLink, Globe, MapPin, Play } from 'lucide-react'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Drawer,
   DrawerBody,
@@ -12,19 +13,25 @@ import {
   DrawerTabsList,
   DrawerTabsTrigger
 } from '@/components/ui/drawer'
-import { StatusDot } from '@/components/ui/status-dot'
-import { domainFromUrl, faviconUrl, formatDate } from '@/lib/format'
+import { StatusDot, statusToTone } from '@/components/ui/status-dot'
+import { domainFromUrl, faviconUrl, formatDate, formatRelative } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { Company, Person } from '@/api'
+import type { Campaign, CampaignRun, Company, Person } from '@/api'
 
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   person: Person | null
   company: Company | null
+  crawl: Campaign | null
   companyPeople: Person[]
+  crawlPeople: Person[]
+  crawlRuns: CampaignRun[]
+  crawlRunsLoading: boolean
+  runningId: string | null
   onSelectPerson: (person: Person) => void
   onSelectCompany: (companyId: string) => void
+  onRunCrawl?: (crawlId: string) => void
 }
 
 export function DetailDrawer({
@@ -32,11 +39,17 @@ export function DetailDrawer({
   onOpenChange,
   person,
   company,
+  crawl,
   companyPeople,
+  crawlPeople,
+  crawlRuns,
+  crawlRunsLoading,
+  runningId,
   onSelectPerson,
-  onSelectCompany
+  onSelectCompany,
+  onRunCrawl
 }: Props) {
-  if (!person && !company) {
+  if (!person && !company && !crawl) {
     return (
       <Drawer open={open} onOpenChange={onOpenChange}>
         <DrawerContent />
@@ -44,31 +57,60 @@ export function DetailDrawer({
     )
   }
 
-  const isPerson = !!person
+  const kind: 'person' | 'company' | 'crawl' = person
+    ? 'person'
+    : crawl
+      ? 'crawl'
+      : 'company'
+
+  const eyebrow = kind === 'person' ? 'Person' : kind === 'crawl' ? 'Crawl' : 'Company'
+  const title =
+    (kind === 'person' ? person?.fullName : kind === 'crawl' ? crawl?.name : company?.name) ??
+    'Details'
+
+  const subtitle =
+    kind === 'person' ? (
+      person?.title ?? undefined
+    ) : kind === 'crawl' ? (
+      crawl ? <StatusDot status={crawl.status} /> : undefined
+    ) : (
+      <span className="font-mono text-[12px]">
+        {company?.domain ?? company?.website ?? ''}
+      </span>
+    )
+
+  const monogram =
+    kind === 'person'
+      ? (person?.fullName ?? '?').slice(0, 2)
+      : kind === 'crawl'
+        ? (crawl?.name ?? '?').slice(0, 2)
+        : (company?.name ?? '?').slice(0, 2)
+
+  const headerActions =
+    kind === 'crawl' && crawl ? (
+      <Button
+        variant="outline"
+        size="sm"
+        iconLeft={Play}
+        loading={runningId === crawl.id}
+        onClick={() => onRunCrawl?.(crawl.id)}
+      >
+        Run
+      </Button>
+    ) : null
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent>
         <DrawerHeader
-          eyebrow={isPerson ? 'Person' : 'Company'}
-          title={(isPerson ? person?.fullName : company?.name) ?? 'Details'}
-          subtitle={
-            isPerson ? (
-              person?.title ?? undefined
-            ) : (
-              <span className="font-mono text-[12px]">
-                {company?.domain ?? company?.website ?? ''}
-              </span>
-            )
-          }
-          monogram={
-            isPerson
-              ? (person?.fullName ?? '?').slice(0, 2)
-              : (company?.name ?? '?').slice(0, 2)
-          }
+          eyebrow={eyebrow}
+          title={title}
+          subtitle={subtitle}
+          monogram={monogram}
+          actions={headerActions}
         />
 
-        {isPerson && person ? (
+        {kind === 'person' && person ? (
           <PersonView
             person={person}
             company={company}
@@ -76,10 +118,20 @@ export function DetailDrawer({
           />
         ) : null}
 
-        {!isPerson && company ? (
+        {kind === 'company' && company ? (
           <CompanyView
             company={company}
             people={companyPeople}
+            onSelectPerson={onSelectPerson}
+          />
+        ) : null}
+
+        {kind === 'crawl' && crawl ? (
+          <CrawlView
+            crawl={crawl}
+            runs={crawlRuns}
+            runsLoading={crawlRunsLoading}
+            people={crawlPeople}
             onSelectPerson={onSelectPerson}
           />
         ) : null}
@@ -293,6 +345,224 @@ function CompanyView({
         </DrawerBody>
       </DrawerTabsContent>
     </DrawerTabs>
+  )
+}
+
+function CrawlView({
+  crawl,
+  runs,
+  runsLoading,
+  people,
+  onSelectPerson
+}: {
+  crawl: Campaign
+  runs: CampaignRun[]
+  runsLoading: boolean
+  people: Person[]
+  onSelectPerson: (person: Person) => void
+}) {
+  const totalQualified = runs.reduce((acc, r) => acc + (r.qualifiedCount ?? 0), 0)
+  return (
+    <DrawerTabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
+      <DrawerTabsList>
+        <DrawerTabsTrigger value="overview">Overview</DrawerTabsTrigger>
+        <DrawerTabsTrigger value="progress">
+          Progress
+          <span className="ml-1.5 font-mono text-[11px] text-ink-faint">
+            {runs.length}
+          </span>
+        </DrawerTabsTrigger>
+        <DrawerTabsTrigger value="people">
+          People
+          <span className="ml-1.5 font-mono text-[11px] text-ink-faint">
+            {people.length}
+          </span>
+        </DrawerTabsTrigger>
+      </DrawerTabsList>
+
+      <DrawerTabsContent value="overview" className="min-h-0 flex-1 overflow-y-auto">
+        <DrawerBody className="space-y-4">
+          <SectionCard title="Configuration">
+            <KV label="Status" value={<StatusDot status={crawl.status} />} />
+            <KV
+              label="Target"
+              value={
+                <span className="font-mono tabular text-[12.5px] text-ink-muted">
+                  {crawl.targetCount} people
+                </span>
+              }
+            />
+            <KV label="Created" value={formatDate(crawl.createdAt)} />
+            <KV label="Updated" value={formatDate(crawl.updatedAt)} />
+          </SectionCard>
+
+          <SectionCard title="ICP description">
+            <pre className="whitespace-pre-wrap break-words rounded-md bg-surface-muted/60 p-3 font-mono text-[12.5px] leading-[18px] text-ink">
+              {crawl.icpDocument}
+            </pre>
+          </SectionCard>
+
+          <SectionCard title="Output">
+            <KV
+              label="Found"
+              value={
+                <span className="font-mono tabular text-[12.5px] text-ink-muted">
+                  {people.length} {people.length === 1 ? 'person' : 'people'}
+                </span>
+              }
+            />
+            <KV
+              label="Qualified"
+              value={
+                <span className="font-mono tabular text-[12.5px] text-ink-muted">
+                  {totalQualified}
+                </span>
+              }
+            />
+            <KV
+              label="Runs"
+              value={
+                <span className="font-mono tabular text-[12.5px] text-ink-muted">
+                  {runs.length}
+                </span>
+              }
+            />
+          </SectionCard>
+        </DrawerBody>
+      </DrawerTabsContent>
+
+      <DrawerTabsContent value="progress" className="min-h-0 flex-1 overflow-y-auto">
+        <DrawerBody>
+          {runsLoading && runs.length === 0 ? (
+            <SectionCard title="Runs">
+              <p className="py-4 text-center text-sm text-ink-faint">Loading runs...</p>
+            </SectionCard>
+          ) : runs.length === 0 ? (
+            <EmptyTab
+              title="No runs yet"
+              description="Click Run to dispatch the agent. Each attempt will appear here with its progress."
+            />
+          ) : (
+            <div className="space-y-3">
+              {runs.map((run, idx) => (
+                <RunRow run={run} index={runs.length - idx} key={run.id} />
+              ))}
+            </div>
+          )}
+        </DrawerBody>
+      </DrawerTabsContent>
+
+      <DrawerTabsContent value="people" className="min-h-0 flex-1 overflow-y-auto">
+        <DrawerBody>
+          {people.length === 0 ? (
+            <EmptyTab
+              title="No people yet"
+              description="People discovered by this crawl will appear here once a run completes."
+            />
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-line bg-surface">
+              {people.map((p, idx) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onSelectPerson(p)}
+                  className={cn(
+                    'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-muted/60',
+                    idx > 0 && 'border-t border-line'
+                  )}
+                >
+                  <Avatar size="md" name={p.fullName ?? '?'} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-ink">
+                      {p.fullName ?? 'Unnamed'}
+                    </div>
+                    <div className="truncate text-xs text-ink-muted">
+                      {p.title ?? '-'}
+                    </div>
+                  </div>
+                  <StatusDot status={p.lifecycleStatus} />
+                </button>
+              ))}
+            </div>
+          )}
+        </DrawerBody>
+      </DrawerTabsContent>
+    </DrawerTabs>
+  )
+}
+
+function RunRow({ run, index }: { run: CampaignRun; index: number }) {
+  const tone = statusToTone(run.status)
+  const checkpointStep =
+    typeof run.checkpoint?.step === 'string' ? (run.checkpoint.step as string) : null
+  const checkpointEntries = Object.entries(run.checkpoint ?? {}).filter(
+    ([k]) => k !== 'step'
+  )
+  return (
+    <article className="overflow-hidden rounded-lg border border-line bg-surface">
+      <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-[11px] text-ink-faint">#{index}</span>
+          <StatusDot tone={tone.tone} label={tone.label} />
+        </div>
+        <span className="text-xs text-ink-muted">
+          {formatRelative(run.createdAt) ?? '-'}
+        </span>
+      </header>
+      <div className="px-4 py-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Stat
+            label="Qualified"
+            value={
+              <span className="font-mono tabular text-sm text-ink">
+                {run.qualifiedCount}
+              </span>
+            }
+          />
+          <Stat
+            label="Step"
+            value={
+              checkpointStep ? (
+                <span className="font-mono text-[12px] text-ink">
+                  {checkpointStep.replace(/_/g, ' ')}
+                </span>
+              ) : (
+                <span className="text-ink-faint">-</span>
+              )
+            }
+          />
+        </div>
+
+        {checkpointEntries.length > 0 ? (
+          <details className="mt-3">
+            <summary className="cursor-pointer select-none text-xs text-ink-muted hover:text-ink">
+              Checkpoint
+            </summary>
+            <pre className="mt-2 max-h-48 overflow-auto rounded-md bg-surface-muted/60 p-2 font-mono text-[11.5px] leading-[16px] text-ink">
+              {JSON.stringify(run.checkpoint, null, 2)}
+            </pre>
+          </details>
+        ) : null}
+
+        {run.lastError ? (
+          <div className="mt-3 rounded-md border border-bad/30 bg-bad/5 px-3 py-2 text-[12px] text-ink">
+            <div className="mb-1 font-medium text-bad">Error</div>
+            <pre className="whitespace-pre-wrap break-words font-mono text-[11.5px] leading-[16px]">
+              {run.lastError}
+            </pre>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-2xs uppercase tracking-wide text-ink-faint">{label}</span>
+      <span>{value}</span>
+    </div>
   )
 }
 

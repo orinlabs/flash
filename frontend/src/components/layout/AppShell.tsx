@@ -8,6 +8,7 @@ interface AppShellProps<TId extends string> {
   activeId: TId
   onSelect: (id: TId) => void
   sidebarFooter?: React.ReactNode
+  onOpenSearch?: () => void
   children: React.ReactNode
 }
 
@@ -16,6 +17,7 @@ export function AppShell<TId extends string>({
   activeId,
   onSelect,
   sidebarFooter,
+  onOpenSearch,
   children
 }: AppShellProps<TId>) {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -36,6 +38,7 @@ export function AppShell<TId extends string>({
       <TopBar
         theme={theme}
         onThemeToggle={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+        onOpenSearch={onOpenSearch}
       />
       <div className="flex min-h-0 flex-1">
         <Sidebar

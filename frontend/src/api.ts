@@ -38,6 +38,17 @@ export type Campaign = {
   updatedAt: string
 }
 
+export type CampaignRun = {
+  id: string
+  campaignId: string
+  status: string
+  qualifiedCount: number
+  checkpoint: Record<string, unknown>
+  lastError: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export type Company = {
   id: string
   name: string

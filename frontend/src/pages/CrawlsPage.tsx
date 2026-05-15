@@ -25,6 +25,8 @@ interface Props {
   onCreate: (event: React.FormEvent) => void
   onRun: (crawlId: string) => void
   onRefresh: () => void
+  onSelectCrawl: (crawl: Campaign) => void
+  selectedKey: string | null
 }
 
 export function CrawlsPage({
@@ -40,7 +42,9 @@ export function CrawlsPage({
   onTargetCountChange,
   onCreate,
   onRun,
-  onRefresh
+  onRefresh,
+  onSelectCrawl,
+  selectedKey
 }: Props) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-bg">
@@ -61,6 +65,8 @@ export function CrawlsPage({
           runningId={runningId}
           onRun={onRun}
           onRefresh={onRefresh}
+          onSelectCrawl={onSelectCrawl}
+          selectedKey={selectedKey}
         />
       </div>
     </div>
@@ -176,13 +182,17 @@ function RecentCrawls({
   loading,
   runningId,
   onRun,
-  onRefresh
+  onRefresh,
+  onSelectCrawl,
+  selectedKey
 }: {
   crawls: Campaign[]
   loading: boolean
   runningId: string | null
   onRun: (id: string) => void
   onRefresh: () => void
+  onSelectCrawl: (crawl: Campaign) => void
+  selectedKey: string | null
 }) {
   const [search, setSearch] = useState('')
 
@@ -229,23 +239,25 @@ function RecentCrawls({
     {
       id: 'action',
       header: '',
-      width: '90px',
+      width: '110px',
       align: 'right',
       cell: (c) => (
-        <Button
-          size="sm"
-          variant="outline"
-          iconLeft={Play}
-          loading={runningId === c.id}
-          onClick={(e) => {
-            e.stopPropagation()
-            onRun(c.id)
-          }}
-          className="opacity-0 transition-opacity group-hover:opacity-100 data-[loading=true]:opacity-100"
-          data-loading={runningId === c.id || undefined}
-        >
-          Run
-        </Button>
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            iconLeft={Play}
+            loading={runningId === c.id}
+            onClick={(e) => {
+              e.stopPropagation()
+              onRun(c.id)
+            }}
+            className="opacity-0 transition-opacity group-hover:opacity-100 data-[loading=true]:opacity-100"
+            data-loading={runningId === c.id || undefined}
+          >
+            Run
+          </Button>
+        </div>
       )
     }
   ]
@@ -277,6 +289,8 @@ function RecentCrawls({
           rows={filtered}
           rowKey={(c) => c.id}
           loading={loading}
+          onRowClick={onSelectCrawl}
+          selectedRowKey={selectedKey}
           empty={{
             icon: Sparkles,
             title: 'No crawls yet',
