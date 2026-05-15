@@ -38,21 +38,44 @@ function sessionTtlMs(): number {
   return safe * 24 * 60 * 60 * 1000
 }
 
+/**
+ * Session cookie SameSite policy:
+ * - **Development** (`NODE_ENV !== 'production'`): `Lax` + no Secure flag so http://localhost
+ *   (e.g. Vite → API proxy) still receives the cookie on same-site `/api/*` fetches.
+ * - **Production**: `None` + `Secure` so the cookie is sent on credentialed fetches from a
+ *   separate SPA origin (static site → API). `Lax` would omit the cookie on those requests,
+ *   causing 401 on `/campaigns` etc. and immediate logout after a successful verify-code.
+ */
 function cookieBaseOptions(): {
   path: string
   httpOnly: boolean
   secure: boolean
-  sameSite: 'Lax' | 'Strict' | 'None'
+  sameSite: 'Lax' | 'None'
   maxAge: number
 } {
   const maxAge = Math.floor(sessionTtlMs() / 1000)
+  const prod = process.env.NODE_ENV === 'production'
+  if (prod) {
+    return {
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'None',
+      maxAge
+    }
+  }
   return {
     path: '/',
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: false,
     sameSite: 'Lax',
     maxAge
   }
+}
+
+function sessionCookieClearOptions(): { path: string; secure: boolean; sameSite: 'Lax' | 'None' } {
+  const o = cookieBaseOptions()
+  return { path: o.path, secure: o.secure, sameSite: o.sameSite }
 }
 
 export const authRoutes = new Hono()
@@ -170,7 +193,7 @@ authRoutes.post('/logout', async (c) => {
   if (token) {
     await db.delete(appSessions).where(eq(appSessions.tokenHash, sha256Hex(token)))
   }
-  deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' })
+  deleteCookie(c, SESSION_COOKIE_NAME, sessionCookieClearOptions())
   return c.json({ ok: true })
 })
 

@@ -10,11 +10,24 @@ import { buildConsentUrl, connectMailboxFromCode } from '../lib/gmail/oauth.js'
 
 export const mailboxesRoutes = new Hono()
 
-const patchSchema = z.object({
-  displayName: z.string().min(1).max(120).optional(),
-  signature: z.string().max(4000).optional(),
-  senderBio: z.string().max(4000).optional()
-})
+const patchSchema = z
+  .object({
+    displayName: z.union([z.string().min(1).max(120), z.null()]).optional(),
+    signature: z.string().max(4000).optional(),
+    senderBio: z.string().max(4000).optional()
+  })
+  .superRefine((data, ctx) => {
+    if (data.senderBio !== undefined) {
+      const t = data.senderBio.trim()
+      if (t.length < 20) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'senderBio must be at least 20 non-whitespace characters',
+          path: ['senderBio']
+        })
+      }
+    }
+  })
 
 function redact<T extends { oauthRefreshToken?: string | null; oauthAccessToken?: string | null }>(
   m: T
@@ -63,6 +76,7 @@ mailboxesRoutes.get('/oauth/callback', async (c) => {
     return c.html(
       callbackHtml({
         ok: true,
+        mailboxId: result.mailbox.id,
         message: `Connected ${result.mailbox.email}${
           result.alreadyExisted ? ' (refreshed existing connection)' : ''
         }.`
@@ -85,12 +99,14 @@ mailboxesRoutes.patch('/:id', async (c) => {
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400)
   }
+  const senderBioPatch =
+    parsed.data.senderBio !== undefined ? { senderBio: parsed.data.senderBio.trim() } : {}
   const [updated] = await db
     .update(mailboxes)
     .set({
       ...(parsed.data.displayName !== undefined ? { displayName: parsed.data.displayName } : {}),
       ...(parsed.data.signature !== undefined ? { signature: parsed.data.signature } : {}),
-      ...(parsed.data.senderBio !== undefined ? { senderBio: parsed.data.senderBio } : {}),
+      ...senderBioPatch,
       updatedAt: new Date()
     })
     .where(eq(mailboxes.id, id))
@@ -115,12 +131,17 @@ mailboxesRoutes.delete('/:id', async (c) => {
   return c.json({ ok: true, mailbox: redact(updated) })
 })
 
-function callbackHtml(opts: { ok: boolean; message: string }): string {
+function callbackHtml(opts: { ok: boolean; message: string; mailboxId?: string }): string {
   const heading = opts.ok ? 'Mailbox connected' : 'Connection failed'
   const subheading = opts.ok
     ? 'You can close this window and return to the app.'
     : 'You can close this window and try again from the Mailboxes page.'
   const tone = opts.ok ? '#16a34a' : '#dc2626'
+  const postMessagePayload = JSON.stringify(
+    opts.ok && opts.mailboxId
+      ? { type: 'mailbox-oauth', ok: true as const, mailboxId: opts.mailboxId }
+      : { type: 'mailbox-oauth', ok: opts.ok as boolean }
+  )
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${heading}</title>
 <style>
@@ -140,7 +161,7 @@ function callbackHtml(opts: { ok: boolean; message: string }): string {
   <button onclick="window.close()">Close window</button>
 </div>
 <script>
-  try { if (window.opener) { window.opener.postMessage({ type: 'mailbox-oauth', ok: ${opts.ok ? 'true' : 'false'} }, '*'); } } catch (_) {}
+  try { if (window.opener) { window.opener.postMessage(${postMessagePayload}, '*'); } } catch (_) {}
 </script>
 </body></html>`
 }

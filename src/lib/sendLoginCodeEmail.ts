@@ -1,5 +1,8 @@
 import { Resend } from 'resend'
 
+/** Used when `RESEND_FROM_EMAIL` is unset. Verify `donotreply.orinlabs.ai` at https://resend.com/domains */
+const DEFAULT_RESEND_FROM = 'Prospector <noreply@donotreply.orinlabs.ai>'
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -21,9 +24,9 @@ function buildHtml(code: string): string {
 
 export async function sendOrinlabsLoginCode(toEmail: string, code: string): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY
-  const from = process.env.RESEND_FROM_EMAIL
-  if (!apiKey || !from) {
-    throw new Error('RESEND_API_KEY and RESEND_FROM_EMAIL must be set to send sign-in codes')
+  const from = process.env.RESEND_FROM_EMAIL?.trim() || DEFAULT_RESEND_FROM
+  if (!apiKey) {
+    throw new Error('RESEND_API_KEY must be set to send sign-in codes')
   }
   const resend = new Resend(apiKey)
   const { error } = await resend.emails.send({

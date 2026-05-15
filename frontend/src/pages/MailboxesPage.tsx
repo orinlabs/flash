@@ -1,5 +1,5 @@
 import { Inbox, Mail, Plug, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { apiDelete, apiPatch, apiPost, type Mailbox } from '@/api'
 import { Badge } from '@/components/ui/badge'
@@ -12,6 +12,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
 import { formatRelative } from '@/lib/format'
 
+const MIN_SENDER_BIO = 20
+
 interface Props {
   mailboxes: Mailbox[]
   loading: boolean
@@ -22,21 +24,70 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
+  const [connectSetupOpen, setConnectSetupOpen] = useState(false)
+  const [connectDraftBio, setConnectDraftBio] = useState('')
+  const [connectDraftDisplayName, setConnectDraftDisplayName] = useState('')
+  const pendingOauthProfileRef = useRef<{ senderBio: string; displayName: string | null } | null>(
+    null
+  )
 
   useEffect(() => {
     function onMessage(ev: MessageEvent) {
-      if (ev.data?.type === 'mailbox-oauth') {
-        setConnecting(false)
-        onRefresh()
-        if (!ev.data?.ok) setError('Mailbox connection failed. Check the popup for details.')
-      }
+      if (ev.data?.type !== 'mailbox-oauth') return
+      setConnecting(false)
+      const ok = ev.data.ok === true
+      const mailboxId = typeof ev.data.mailboxId === 'string' ? ev.data.mailboxId : null
+
+      void (async () => {
+        await onRefresh()
+        if (ok && mailboxId) {
+          const pending = pendingOauthProfileRef.current
+          pendingOauthProfileRef.current = null
+          if (pending) {
+            try {
+              await apiPatch<Mailbox>('/mailboxes/' + mailboxId, {
+                senderBio: pending.senderBio,
+                ...(pending.displayName ? { displayName: pending.displayName } : {})
+              })
+            } catch (err) {
+              setError(
+                (err instanceof Error ? err.message : 'Failed to save sender profile') +
+                  ' Open this mailbox, click Edit, and save your sender bio.'
+              )
+            }
+            await onRefresh()
+          }
+          setConnectSetupOpen(false)
+          setConnectDraftBio('')
+          setConnectDraftDisplayName('')
+        } else {
+          pendingOauthProfileRef.current = null
+          if (!ok) {
+            setError('Mailbox connection failed. Check the popup for details.')
+          }
+        }
+      })()
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [onRefresh])
 
-  const handleConnect = useCallback(async () => {
+  const openConnectSetup = useCallback(() => {
     setError(null)
+    setConnectSetupOpen(true)
+  }, [])
+
+  const authorizeGmail = useCallback(async () => {
+    const bio = connectDraftBio.trim()
+    if (bio.length < MIN_SENDER_BIO) {
+      setError('Enter a sender bio (at least ' + MIN_SENDER_BIO + ' characters) before authorizing Gmail.')
+      return
+    }
+    setError(null)
+    pendingOauthProfileRef.current = {
+      senderBio: bio,
+      displayName: connectDraftDisplayName.trim() || null
+    }
     setConnecting(true)
     try {
       const { consentUrl } = await apiPost<{ consentUrl: string }>('/mailboxes/oauth/start')
@@ -47,15 +98,17 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
       )
       if (!popup) {
         setConnecting(false)
+        pendingOauthProfileRef.current = null
         setError(
           'Popup blocked. Allow popups for this site, or open this URL manually: ' + consentUrl
         )
       }
     } catch (err) {
       setConnecting(false)
+      pendingOauthProfileRef.current = null
       setError(err instanceof Error ? err.message : 'Failed to start OAuth')
     }
-  }, [])
+  }, [connectDraftBio, connectDraftDisplayName])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
@@ -64,16 +117,56 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
           Connect Gmail accounts. Outreach drafts are reviewed in-app and sent from these mailboxes only on your approval.
         </p>
         <ToolbarSpacer />
+        {connectSetupOpen ? (
+          <Button variant="outline" size="md" onClick={() => setConnectSetupOpen(false)}>
+            Cancel setup
+          </Button>
+        ) : null}
         <Button
           variant="primary"
           size="md"
           iconLeft={Plug}
           loading={connecting}
-          onClick={handleConnect}
+          onClick={connectSetupOpen ? authorizeGmail : openConnectSetup}
         >
-          Connect Gmail
+          {connectSetupOpen ? 'Authorize with Google' : 'Connect Gmail'}
         </Button>
       </Toolbar>
+
+      {connectSetupOpen ? (
+        <div className="border-b border-line bg-surface-muted/30 px-5 py-4">
+          <p className="mb-3 text-sm font-medium text-ink">Before Gmail connects</p>
+          <p className="mb-4 text-xs text-ink-muted">
+            The outreach agent needs a sender bio (who you are, what you pitch, tone). This is required and cannot be skipped.
+          </p>
+          <div className="grid max-w-3xl grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-2xs font-medium uppercase tracking-wide text-ink-faint">
+                Display name (optional)
+              </label>
+              <Input
+                value={connectDraftDisplayName}
+                onChange={(e) => setConnectDraftDisplayName(e.target.value)}
+                placeholder="e.g. Bryan Houlton"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <label className="text-2xs font-medium uppercase tracking-wide text-ink-faint">
+                Sender bio (required, min. {MIN_SENDER_BIO} characters)
+              </label>
+              <Textarea
+                value={connectDraftBio}
+                onChange={(e) => setConnectDraftBio(e.target.value)}
+                placeholder="One paragraph: who I am, what I'm pitching, my tone, my company, my context. The agent uses this when drafting."
+                className="min-h-[140px]"
+              />
+              <p className="text-2xs text-ink-faint">
+                {connectDraftBio.trim().length}/{MIN_SENDER_BIO} characters minimum
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="border-b border-line bg-bg px-5 py-2.5">
@@ -95,7 +188,7 @@ export function MailboxesPage({ mailboxes, loading, onRefresh }: Props) {
               icon={Inbox}
               title="No mailboxes connected"
               description="Connect a Gmail account to let the agent draft outreach on your behalf."
-              primaryAction={{ label: 'Connect Gmail', icon: Plug, onClick: handleConnect }}
+              primaryAction={{ label: 'Connect Gmail', icon: Plug, onClick: openConnectSetup }}
             />
           </div>
         ) : (
@@ -143,13 +236,18 @@ function MailboxRow({
   const [removing, setRemoving] = useState(false)
 
   async function save() {
+    const bio = senderBio.trim()
+    if (bio.length < MIN_SENDER_BIO) {
+      onError('Sender bio is required (at least ' + MIN_SENDER_BIO + ' characters) for the outreach agent.')
+      return
+    }
     setSaving(true)
     onError(null)
     try {
       await apiPatch<Mailbox>('/mailboxes/' + mailbox.id, {
         displayName: displayName || null,
         signature,
-        senderBio
+        senderBio: bio
       })
       onSaved()
     } catch (err) {
@@ -185,6 +283,11 @@ function MailboxRow({
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-ink">{mailbox.email}</span>
             <StatusDot status={mailbox.status} size="sm" />
+            {(!mailbox.senderBio?.trim() || mailbox.senderBio.trim().length < MIN_SENDER_BIO) ? (
+              <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-600/40">
+                sender bio required
+              </Badge>
+            ) : null}
             {mailbox.status === 'active' && !mailbox.hasRefreshToken ? (
               <Badge variant="outline">no refresh token</Badge>
             ) : null}
@@ -226,7 +329,7 @@ function MailboxRow({
           </div>
           <div className="flex flex-col gap-1.5 md:row-span-2">
             <label className="text-2xs font-medium uppercase tracking-wide text-ink-faint">
-              Sender bio (for the agent)
+              Sender bio (required, min. {MIN_SENDER_BIO} chars)
             </label>
             <Textarea
               value={senderBio}

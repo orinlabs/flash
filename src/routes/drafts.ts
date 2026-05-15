@@ -160,10 +160,12 @@ draftsRoutes.post('/:id/approve', async (c) => {
     const updated = await markDraftSent(id, sent)
     await appendOutreachEvent({
       companyId: existing.companyId,
-      kind: 'note',
-      summary: `Operator approved + sent draft: ${existing.subject}`,
+      kind: 'email_sent',
+      summary: `Email sent to ${existing.toEmail}: ${existing.subject}`,
       details: {
         draftId: id,
+        toEmail: existing.toEmail,
+        subject: existing.subject,
         gmailMessageId: sent.gmailMessageId,
         gmailThreadId: sent.gmailThreadId
       }

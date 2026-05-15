@@ -24,7 +24,7 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 /** Work-account agent only; override with OPENROUTER_WORK_ACCOUNT_MODEL. */
 const WORK_ACCOUNT_MODEL = 'openai/gpt-5'
 
-const MAX_STEPS = 16
+const MAX_STEPS = 50
 const MAX_WEB_SEARCHES = 5
 const MAX_FETCH_URLS = 4
 
@@ -84,35 +84,9 @@ const TOOLS = [
   {
     type: 'function' as const,
     function: {
-      name: 'record_event',
-      description:
-        "Append a single line to this account's research timeline. Use for: research findings ('CEO previously at X'), decisions ('skipping warm intro path because no overlap'), notes for future runs ('check if they exhibit at SaaStr in May'), and mutual / event / investor discoveries. This is how you remember things between sleeps.",
-      parameters: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          kind: {
-            type: 'string',
-            enum: ['research', 'decision', 'note', 'mutual', 'event', 'investor', 'error'],
-            description: 'Category for the timeline UI.'
-          },
-          summary: { type: 'string', description: 'One-line headline of what happened.' },
-          details: {
-            type: ['object', 'null'],
-            description: 'Optional structured payload (people names, urls, etc.).',
-            additionalProperties: true
-          },
-          source_url: { type: ['string', 'null'] }
-        },
-        required: ['kind', 'summary', 'details', 'source_url']
-      }
-    }
-  },
-  {
-    type: 'function' as const,
-    function: {
       name: 'list_recent_events',
-      description: "Read this account's recent timeline entries (most recent first).",
+      description:
+        "Read this account's timeline (most recent first): emails sent, send failures, operator discards/regenerates, strategy revisions, and session notes. You cannot append to it — use update_strategy for durable notes between runs.",
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -405,24 +379,6 @@ async function dispatchTool(ctx: ToolCtx, call: ToolCall): Promise<ToolDispatchR
         }
         await writeStrategy(ctx.companyId, newText, reason)
         return { kind: 'continue', content: JSON.stringify({ ok: true }) }
-      }
-      case 'record_event': {
-        const summary = typeof args.summary === 'string' ? args.summary : ''
-        const kind = typeof args.kind === 'string' ? args.kind : 'note'
-        if (!summary.trim()) {
-          return { kind: 'continue', content: JSON.stringify({ error: 'summary required' }) }
-        }
-        const event = await appendOutreachEvent({
-          companyId: ctx.companyId,
-          kind,
-          summary,
-          details:
-            args.details && typeof args.details === 'object'
-              ? (args.details as Record<string, unknown>)
-              : null,
-          sourceUrl: typeof args.source_url === 'string' ? args.source_url : null
-        })
-        return { kind: 'continue', content: JSON.stringify({ ok: true, event_id: event.id }) }
       }
       case 'list_recent_events': {
         const limit = clamp(Number(args.limit) || 20, 1, 50)
@@ -792,7 +748,7 @@ function buildSystemPrompt(): string {
     'Your goals, in priority order:',
     '1. Find a credible path to a real human inside this company.',
     '2. Draft a thoughtful, specific email (or several) that the operator can review and send from the assigned mailbox.',
-    '3. Maintain the strategy document and timeline so the next wake-up (yours or the operator) has full context.',
+    '3. Maintain the strategy document so the next wake-up has full context. Use list_recent_events to see what already happened (sends, operator actions); use update_strategy for your working plan.',
     '',
     'Channels and angles you are encouraged to explore:',
     '- Cold email to a named exec / IC with a specific reason (recent news, hire, product launch, talk).',
@@ -804,14 +760,14 @@ function buildSystemPrompt(): string {
     'Recipient and email-address rules:',
     '- Never draft_email to generic role inboxes (hello@, info@, contact@, sales@, support@, team@, office@, media@) unless the strategy explicitly targets that inbox AND you have sourced proof that this thread or owner is correct.',
     '- Never use an address you cannot defend: prefer a verified address from the web, press, filings, or our DB. If you cannot find the exact address but you did find the company’s real pattern (e.g. first.last@domain.com, flast@, f.last@) from staff listings, press quotes, or similar, you MAY construct the likely address for a named individual and explain the pattern + sources in agent_rationale — that is acceptable when the pattern is well-supported even if the exact mailbox is unlisted.',
-    '- Do not fabricate domains, patterns, or people. If you lack both a verified address and a sourced pattern, do not draft — research more, record_event, then sleep or pause.',
+    '- Do not fabricate domains, patterns, or people. If you lack both a verified address and a sourced pattern, do not draft — research more, update_strategy if needed, then sleep or pause.',
     '- If you wrote a bad draft, delete_draft it and replace with a corrected one rather than leaving junk in the queue.',
     '',
     'Hard rules:',
     '- Use only real, sourced information. Never invent a person, email, or fact.',
     '- Drafts you create with draft_email do NOT get sent automatically. The operator reviews them in the Drafts UI and approves them; only then do they send.',
     '- Be specific. Generic cold copy is rejected by the operator.',
-    '- Record every meaningful finding via record_event so the next session can build on it.',
+    '- When emails are actually sent from the Drafts UI, the system records that on the timeline automatically; use list_recent_events to see sends and failures.',
     '- Always end the session with sleep, pause, or mark_completed. Never just stop talking.',
     '- Communicate only through tool calls; do not produce a final text answer.'
   ].join('\n')

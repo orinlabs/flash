@@ -127,16 +127,6 @@ export async function insertDraft(input: InsertDraftInput): Promise<OutreachDraf
       status: 'pending_review'
     })
     .returning()
-  await appendOutreachEvent({
-    companyId: input.companyId,
-    kind: 'draft_created',
-    summary: `Drafted email: ${input.subject}`,
-    details: {
-      draftId: row.id,
-      personId: input.personId ?? null,
-      toEmail: input.toEmail
-    }
-  })
   return row
 }
 
@@ -252,12 +242,6 @@ export async function deleteOutreachDraft(
       error: 'draft not found, not pending_review, or does not belong to this company'
     }
   }
-  await appendOutreachEvent({
-    companyId,
-    kind: 'note',
-    summary: `Agent deleted draft: "${row.subject}"`,
-    details: { draftId: row.id, toEmail: row.toEmail }
-  })
   return { ok: true }
 }
 
