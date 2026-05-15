@@ -20,6 +20,7 @@ import {
   upsertPerson
 } from './repo.js'
 import { LAVENDER_COLD_EMAIL_101_PROMPT_BLOCK } from '../lib/lavenderColdEmail101.js'
+import { openRouterReasoningConfig } from '../lib/openrouter.js'
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 /** Work-account agent only; override with OPENROUTER_WORK_ACCOUNT_MODEL. */
@@ -52,6 +53,114 @@ type OpenRouterResponse = {
     }
   }>
   error?: { message?: string }
+}
+
+type JsonObject = Record<string, unknown>
+
+const LOG_TEXT_KEYS = new Set([
+  'agent_rationale',
+  'body',
+  'context',
+  'new_text',
+  'notes',
+  'reasoning',
+  'sender_bio'
+])
+
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return null
+  }
+}
+
+function sanitizeForLog(value: unknown, key?: string): unknown {
+  if (typeof value === 'string') {
+    if (key && LOG_TEXT_KEYS.has(key)) return { chars: value.length }
+    return value.length > 180 ? value.slice(0, 180) + '...' : value
+  }
+  if (Array.isArray(value)) return value.slice(0, 10).map((item) => sanitizeForLog(item))
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as JsonObject).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeForLog(entryValue, entryKey)
+      ])
+    )
+  }
+  return value
+}
+
+function toolCallArgsForLog(call: ToolCall): unknown {
+  const parsed = safeJsonParse(call.function.arguments)
+  if (!parsed || typeof parsed !== 'object') return { parse_error: true }
+  return sanitizeForLog(parsed)
+}
+
+function toolResultForLog(out: ToolDispatchResult): JsonObject {
+  if (out.kind === 'terminate') {
+    return {
+      kind: out.kind,
+      status: out.outcome.status,
+      reason: sanitizeForLog(out.outcome.reason, 'reason'),
+      wakeAt:
+        out.outcome.status === 'slept' && out.outcome.wakeAt
+          ? out.outcome.wakeAt.toISOString()
+          : undefined
+    }
+  }
+
+  const parsed = safeJsonParse(out.content)
+  if (!parsed || typeof parsed !== 'object') return { kind: out.kind }
+  const obj = parsed as JsonObject
+  return {
+    kind: out.kind,
+    ok: obj.ok,
+    error: obj.error,
+    message: sanitizeForLog(obj.message),
+    rows: Array.isArray(obj.rows) ? obj.rows.length : undefined,
+    data: Array.isArray(obj.data) ? obj.data.length : undefined,
+    events: Array.isArray(obj.events) ? obj.events.length : undefined,
+    drafts: Array.isArray(obj.drafts) ? obj.drafts.length : undefined,
+    people: Array.isArray(obj.people) ? obj.people.length : undefined,
+    companies: Array.isArray(obj.companies) ? obj.companies.length : undefined
+  }
+}
+
+function logToolCallStart(companyId: string, step: number, call: ToolCall): number {
+  const startedAt = Date.now()
+  console.info(
+    '[workAccount] agent_tool_call:start',
+    JSON.stringify({
+      companyId,
+      step,
+      toolCallId: call.id,
+      toolName: call.function.name,
+      args: toolCallArgsForLog(call)
+    })
+  )
+  return startedAt
+}
+
+function logToolCallEnd(
+  companyId: string,
+  step: number,
+  call: ToolCall,
+  startedAt: number,
+  out: ToolDispatchResult
+) {
+  console.info(
+    '[workAccount] agent_tool_call:end',
+    JSON.stringify({
+      companyId,
+      step,
+      toolCallId: call.id,
+      toolName: call.function.name,
+      durationMs: Date.now() - startedAt,
+      result: toolResultForLog(out)
+    })
+  )
 }
 
 export type WorkAccountAgentResult =
@@ -718,7 +827,8 @@ async function callOpenRouter(messages: ChatMessage[]): Promise<{
       messages,
       tools: TOOLS,
       tool_choice: 'auto',
-      parallel_tool_calls: false
+      parallel_tool_calls: false,
+      reasoning: openRouterReasoningConfig()
     })
   })
 
@@ -976,7 +1086,9 @@ export async function workAccountAgent(input: AgentInput): Promise<WorkAccountAg
       null
 
     for (const call of toolCalls) {
+      const toolCallStartedAt = logToolCallStart(ctx.companyId, steps, call)
       const out = await dispatchTool(ctx, call)
+      logToolCallEnd(ctx.companyId, steps, call, toolCallStartedAt, out)
       if (out.kind === 'continue') {
         messages.push({ role: 'tool', tool_call_id: call.id, content: out.content })
       } else {

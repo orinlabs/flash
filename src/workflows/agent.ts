@@ -1,4 +1,5 @@
 import { estimateChatCostUsd } from '../lib/pricing.js'
+import { openRouterReasoningConfig } from '../lib/openrouter.js'
 import { attributeUsageToPerson, recordUsageEvent } from '../lib/usage.js'
 import {
   exaFetchUrl,
@@ -633,6 +634,7 @@ async function callOpenRouter(messages: ChatMessage[]): Promise<{
       tools: TOOLS,
       tool_choice: 'auto',
       parallel_tool_calls: false,
+      reasoning: openRouterReasoningConfig(),
       // Ask OpenRouter to include real cost in the response. We still fall
       // back to a per-token estimate if the field is missing.
       usage: { include: true }
