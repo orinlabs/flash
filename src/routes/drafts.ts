@@ -1,0 +1,244 @@
+import { desc, eq } from 'drizzle-orm'
+import { Hono } from 'hono'
+import { z } from 'zod'
+
+import { db } from '../db/client.js'
+import { companies, mailboxes, outreachDrafts, outreachEvents, people } from '../db/schema.js'
+import { sendMessage } from '../lib/gmail/send.js'
+import { startWorkAccount } from '../lib/workflowTrigger.js'
+import {
+  appendOutreachEvent,
+  listDrafts,
+  markDraftDiscarded,
+  markDraftFailed,
+  markDraftSent,
+  patchDraft
+} from '../workflows/repoOutreach.js'
+
+export const draftsRoutes = new Hono()
+
+const listQuerySchema = z.object({
+  status: z.string().optional(),
+  mailboxId: z.string().uuid().optional(),
+  companyId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+  offset: z.coerce.number().int().min(0).optional().default(0)
+})
+
+const patchSchema = z.object({
+  subject: z.string().min(1).max(998).optional(),
+  body: z.string().min(1).max(50_000).optional(),
+  bodyHtml: z.string().max(200_000).nullable().optional(),
+  toEmail: z.string().email().optional(),
+  reviewNotes: z.string().max(8000).nullable().optional()
+})
+
+const regenerateSchema = z.object({
+  reviewNotes: z.string().min(1).max(8000)
+})
+
+draftsRoutes.get('/', async (c) => {
+  const parsed = listQuerySchema.safeParse({
+    status: c.req.query('status') ?? 'pending_review',
+    mailboxId: c.req.query('mailboxId') ?? undefined,
+    companyId: c.req.query('companyId') ?? undefined,
+    limit: c.req.query('limit') ?? undefined,
+    offset: c.req.query('offset') ?? undefined
+  })
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+  const { status, mailboxId, companyId, limit, offset } = parsed.data
+  const result = await listDrafts({
+    status: status || null,
+    mailboxId: mailboxId ?? null,
+    companyId: companyId ?? null,
+    limit,
+    offset
+  })
+  return c.json({
+    data: result.rows.map((r) => ({
+      draft: r.draft,
+      company: r.company
+        ? { id: r.company.id, name: r.company.name, domain: r.company.domain }
+        : null,
+      mailbox: r.mailbox
+        ? { id: r.mailbox.id, email: r.mailbox.email, displayName: r.mailbox.displayName }
+        : null,
+      person: r.person
+        ? { id: r.person.id, fullName: r.person.fullName, title: r.person.title }
+        : null
+    })),
+    total: result.total,
+    limit: result.limit,
+    offset: result.offset
+  })
+})
+
+draftsRoutes.get('/:id', async (c) => {
+  const id = c.req.param('id')
+  const [row] = await db
+    .select({
+      draft: outreachDrafts,
+      company: companies,
+      mailbox: mailboxes,
+      person: people
+    })
+    .from(outreachDrafts)
+    .leftJoin(companies, eq(companies.id, outreachDrafts.companyId))
+    .leftJoin(mailboxes, eq(mailboxes.id, outreachDrafts.mailboxId))
+    .leftJoin(people, eq(people.id, outreachDrafts.personId))
+    .where(eq(outreachDrafts.id, id))
+    .limit(1)
+  if (!row) return c.json({ error: 'not found' }, 404)
+
+  const recentEvents = row.company
+    ? await db
+        .select()
+        .from(outreachEvents)
+        .where(eq(outreachEvents.companyId, row.company.id))
+        .orderBy(desc(outreachEvents.createdAt))
+        .limit(20)
+    : []
+
+  return c.json({
+    draft: row.draft,
+    company: row.company,
+    mailbox: row.mailbox
+      ? { id: row.mailbox.id, email: row.mailbox.email, displayName: row.mailbox.displayName }
+      : null,
+    person: row.person,
+    strategy: row.company?.outreachStrategy ?? null,
+    recentEvents
+  })
+})
+
+draftsRoutes.patch('/:id', async (c) => {
+  const id = c.req.param('id')
+  const parsed = patchSchema.safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400)
+  const [existing] = await db
+    .select()
+    .from(outreachDrafts)
+    .where(eq(outreachDrafts.id, id))
+    .limit(1)
+  if (!existing) return c.json({ error: 'not found' }, 404)
+  if (existing.status !== 'pending_review') {
+    return c.json({ error: `cannot edit draft in status ${existing.status}` }, 409)
+  }
+  const updated = await patchDraft(id, parsed.data)
+  return c.json(updated)
+})
+
+draftsRoutes.post('/:id/approve', async (c) => {
+  const id = c.req.param('id')
+  const [existing] = await db
+    .select()
+    .from(outreachDrafts)
+    .where(eq(outreachDrafts.id, id))
+    .limit(1)
+  if (!existing) return c.json({ error: 'not found' }, 404)
+  if (existing.status !== 'pending_review' && existing.status !== 'failed') {
+    return c.json({ error: `cannot approve draft in status ${existing.status}` }, 409)
+  }
+
+  // Flip to approved first so a concurrent request doesn't double-send.
+  await db
+    .update(outreachDrafts)
+    .set({ status: 'approved', sendError: null, updatedAt: new Date() })
+    .where(eq(outreachDrafts.id, id))
+
+  try {
+    const sent = await sendMessage({
+      mailboxId: existing.mailboxId,
+      to: existing.toEmail,
+      subject: existing.subject,
+      body: existing.body,
+      bodyHtml: existing.bodyHtml,
+      threadId: existing.gmailThreadId
+    })
+    const updated = await markDraftSent(id, sent)
+    await appendOutreachEvent({
+      companyId: existing.companyId,
+      kind: 'note',
+      summary: `Operator approved + sent draft: ${existing.subject}`,
+      details: {
+        draftId: id,
+        gmailMessageId: sent.gmailMessageId,
+        gmailThreadId: sent.gmailThreadId
+      }
+    })
+    return c.json(updated)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const failed = await markDraftFailed(id, message)
+    await appendOutreachEvent({
+      companyId: existing.companyId,
+      kind: 'error',
+      summary: `Send failed: ${message.slice(0, 200)}`,
+      details: { draftId: id }
+    })
+    return c.json({ error: message, draft: failed }, 502)
+  }
+})
+
+draftsRoutes.post('/:id/discard', async (c) => {
+  const id = c.req.param('id')
+  const body = (await c.req
+    .json()
+    .catch(() => ({}))) as { reviewNotes?: string }
+  const [existing] = await db
+    .select()
+    .from(outreachDrafts)
+    .where(eq(outreachDrafts.id, id))
+    .limit(1)
+  if (!existing) return c.json({ error: 'not found' }, 404)
+  const updated = await markDraftDiscarded(id, body?.reviewNotes ?? null)
+  await appendOutreachEvent({
+    companyId: existing.companyId,
+    kind: 'note',
+    summary: `Operator discarded draft: ${existing.subject}`,
+    details: { draftId: id, reviewNotes: body?.reviewNotes ?? null }
+  })
+  return c.json(updated)
+})
+
+draftsRoutes.post('/:id/regenerate', async (c) => {
+  const id = c.req.param('id')
+  const parsed = regenerateSchema.safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400)
+  const [existing] = await db
+    .select()
+    .from(outreachDrafts)
+    .where(eq(outreachDrafts.id, id))
+    .limit(1)
+  if (!existing) return c.json({ error: 'not found' }, 404)
+  const discarded = await markDraftDiscarded(id, parsed.data.reviewNotes)
+  await appendOutreachEvent({
+    companyId: existing.companyId,
+    kind: 'decision',
+    summary: `Operator asked for a rewrite. Notes: ${parsed.data.reviewNotes.slice(0, 200)}`,
+    details: { draftId: id, reviewNotes: parsed.data.reviewNotes }
+  })
+  await db
+    .update(companies)
+    .set({ outreachNextWakeAt: new Date(), updatedAt: new Date() })
+    .where(eq(companies.id, existing.companyId))
+
+  let workflowTriggered = false
+  let workflowError: string | undefined
+  try {
+    workflowTriggered = await startWorkAccount(existing.companyId)
+  } catch (e) {
+    workflowError = e instanceof Error ? e.message : String(e)
+  }
+  return c.json({
+    ok: true,
+    discardedDraft: discarded,
+    workflowTriggered,
+    error: workflowError,
+    hint: workflowTriggered
+      ? undefined
+      : 'No Render workflow dispatched; the sweep cron will pick this up.'
+  })
+})

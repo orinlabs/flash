@@ -1,7 +1,8 @@
 import { task } from '@renderinc/sdk/workflows'
 
-import { withUsageContext } from '../lib/usage.js'
+import { attributeUsageToCompany, withUsageContext } from '../lib/usage.js'
 import { findPersonAgent, type FindPersonAgentResult } from './agent.js'
+import { workAccountAgent, type WorkAccountAgentResult } from './outreachAgent.js'
 import {
   getCampaignDiscoveredPersonIds,
   getCampaignRunWithCampaign,
@@ -10,6 +11,7 @@ import {
   updateCampaignStatusIfRunning,
   updateRunCheckpoint
 } from './repo.js'
+import { listDueCompanyIds } from './repoOutreach.js'
 
 type SlotInput = {
   campaignRunId: string
@@ -233,3 +235,61 @@ async function runProspectCampaign(campaignRunId: string): Promise<{
     errors
   }
 }
+
+/**
+ * One run of the outreach agent against a single account. Triggered:
+ *   - Manually by the user ("Run now" / bulk start)
+ *   - By the `sweepDueAccounts` task when `outreach_next_wake_at` is due.
+ * Always idempotent against `companies.outreach_status` — the agent itself
+ * decides to sleep / pause / mark_completed and writes its own next wake.
+ */
+export const workAccount = task(
+  {
+    name: 'workAccount',
+    timeoutSeconds: 600,
+    retry: { maxRetries: 1, waitDurationMs: 2000, backoffScaling: 2 }
+  },
+  async function workAccount(
+    companyId: string
+  ): Promise<{ companyId: string; result: WorkAccountAgentResult }> {
+    requiredEnv('DATABASE_URL')
+    requiredEnv('OPENROUTER_API_KEY')
+    const result = await withUsageContext({}, async () => {
+      await attributeUsageToCompany(companyId)
+      return workAccountAgent({ companyId })
+    })
+    return { companyId, result }
+  }
+)
+
+/**
+ * Scheduled sweeper invoked by the Render Cron Job. Finds all `working`
+ * companies whose `outreach_next_wake_at <= now()` and fans out one
+ * `workAccount` subtask per company.
+ */
+export const sweepDueAccounts = task(
+  {
+    name: 'sweepDueAccounts',
+    timeoutSeconds: 1200,
+    retry: { maxRetries: 0, waitDurationMs: 1000, backoffScaling: 1 }
+  },
+  async function sweepDueAccounts(): Promise<{
+    swept: number
+    succeeded: number
+    failed: number
+  }> {
+    requiredEnv('DATABASE_URL')
+    const ids = await listDueCompanyIds(50)
+    if (ids.length === 0) {
+      return { swept: 0, succeeded: 0, failed: 0 }
+    }
+    const settled = await Promise.allSettled(ids.map((id) => workAccount(id)))
+    let succeeded = 0
+    let failed = 0
+    for (const s of settled) {
+      if (s.status === 'fulfilled') succeeded += 1
+      else failed += 1
+    }
+    return { swept: ids.length, succeeded, failed }
+  }
+)

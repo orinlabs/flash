@@ -1,100 +1,215 @@
-import { ArrowRight, Mail, Search, Sparkles } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { Building2, Inbox, Mail, Play, RefreshCw } from 'lucide-react'
+import { useMemo } from 'react'
 
+import type { Company, Mailbox } from '@/api'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
+import { StatusDot } from '@/components/ui/status-dot'
+import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
+import { faviconUrl, formatRelative } from '@/lib/format'
 
 interface Props {
-  onGoToCrawls?: () => void
+  companies: Company[]
+  mailboxes: Mailbox[]
+  pendingDraftsByCompany: Map<string, number>
+  loading: boolean
+  onRefresh: () => void
+  onSelectCompany: (company: Company) => void
+  onGoToDrafts: () => void
+  onGoToCompanies: () => void
+  onRunCompany: (companyId: string) => void
+  runningId: string | null
+  selectedKey: string | null
 }
 
-export function CampaignsPage({ onGoToCrawls }: Props) {
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-bg">
-      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10">
-        <Card className="overflow-hidden">
-          <div className="px-8 pt-8 pb-6 text-center">
-            <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-lg border border-line bg-surface-muted text-ink">
-              <Mail className="size-5" />
-            </div>
-            <h2 className="text-xl font-semibold tracking-tight">Email campaigns</h2>
-            <p className="mx-auto mt-1.5 max-w-md text-sm text-ink-muted">
-              Once you have qualified prospects, generate personalized drafts and review them
-              before they land as Gmail drafts.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 border-t border-line">
-            <Step
-              index={1}
-              icon={Search}
-              title="Crawl"
-              description="Describe an ICP and let the agent surface matching prospects."
-            />
-            <Step
-              index={2}
-              icon={Sparkles}
-              title="Pick people"
-              description="Triage the list, mark qualified contacts, drop the rest."
-              middle
-            />
-            <Step
-              index={3}
-              icon={Mail}
-              title="Generate drafts"
-              description="Personalized emails per person, ready in your Gmail drafts."
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3 border-t border-line bg-surface-muted/40 px-6 py-4">
-            <p className="text-sm text-ink-muted">Available after your first crawl.</p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="md"
-                onClick={onGoToCrawls}
-                iconRight={ArrowRight}
-              >
-                Start a crawl
-              </Button>
-              <Button variant="primary" size="md" disabled>
-                New campaign
-              </Button>
-            </div>
-          </div>
-        </Card>
-      </div>
-    </div>
+export function CampaignsPage({
+  companies,
+  mailboxes,
+  pendingDraftsByCompany,
+  loading,
+  onRefresh,
+  onSelectCompany,
+  onGoToDrafts,
+  onGoToCompanies,
+  onRunCompany,
+  runningId,
+  selectedKey
+}: Props) {
+  const workingCompanies = useMemo(
+    () =>
+      companies
+        .filter((c) => c.outreachStatus === 'working')
+        .sort((a, b) => {
+          const aWake = a.outreachNextWakeAt ? new Date(a.outreachNextWakeAt).getTime() : Infinity
+          const bWake = b.outreachNextWakeAt ? new Date(b.outreachNextWakeAt).getTime() : Infinity
+          return aWake - bWake
+        }),
+    [companies]
   )
-}
 
-function Step({
-  index,
-  icon: Icon,
-  title,
-  description,
-  middle
-}: {
-  index: number
-  icon: LucideIcon
-  title: string
-  description: string
-  middle?: boolean
-}) {
+  const mailboxById = useMemo(() => new Map(mailboxes.map((m) => [m.id, m])), [mailboxes])
+
+  const totalPending = useMemo(
+    () => Array.from(pendingDraftsByCompany.values()).reduce((acc, n) => acc + n, 0),
+    [pendingDraftsByCompany]
+  )
+
+  const columns: DataTableColumn<Company>[] = [
+    {
+      id: 'name',
+      header: 'Account',
+      width: '28%',
+      cell: (c) => {
+        const fav = faviconUrl(c.domain ?? c.website)
+        return (
+          <div className="flex items-center gap-2.5">
+            {fav ? (
+              <img
+                src={fav}
+                alt=""
+                className="size-5 rounded-sm border border-line"
+                onError={(e) => ((e.currentTarget.style.visibility = 'hidden'))}
+              />
+            ) : (
+              <span className="size-5 rounded-sm border border-line bg-surface-muted" />
+            )}
+            <span className="truncate font-medium text-ink">{c.name}</span>
+          </div>
+        )
+      }
+    },
+    {
+      id: 'mailbox',
+      header: 'Mailbox',
+      width: '22%',
+      cell: (c) => {
+        if (!c.outreachMailboxId) return <span className="text-ink-faint">-</span>
+        const m = mailboxById.get(c.outreachMailboxId)
+        return (
+          <span className="truncate font-mono text-[12px] text-ink-muted">
+            {m?.email ?? '(missing)'}
+          </span>
+        )
+      }
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      width: '120px',
+      cell: (c) => <StatusDot status={c.outreachStatus} size="sm" />
+    },
+    {
+      id: 'pending',
+      header: 'Pending',
+      align: 'right',
+      width: '90px',
+      cell: (c) => {
+        const n = pendingDraftsByCompany.get(c.id) ?? 0
+        return (
+          <span
+            className={
+              n > 0
+                ? 'font-mono tabular text-[12.5px] text-warn'
+                : 'font-mono tabular text-[12.5px] text-ink-faint'
+            }
+          >
+            {n}
+          </span>
+        )
+      }
+    },
+    {
+      id: 'wake',
+      header: 'Next wake',
+      width: '140px',
+      cell: (c) =>
+        c.outreachNextWakeAt ? (
+          <span className="truncate text-[12.5px] text-ink-muted">
+            {formatRelative(c.outreachNextWakeAt) ?? '-'}
+          </span>
+        ) : (
+          <span className="text-ink-faint">-</span>
+        )
+    },
+    {
+      id: 'lastWorked',
+      header: 'Last worked',
+      width: '140px',
+      cell: (c) =>
+        c.outreachLastWorkedAt ? (
+          <span className="truncate text-[12.5px] text-ink-muted">
+            {formatRelative(c.outreachLastWorkedAt) ?? '-'}
+          </span>
+        ) : (
+          <span className="text-ink-faint">never</span>
+        )
+    },
+    {
+      id: 'action',
+      header: '',
+      align: 'right',
+      width: '100px',
+      cell: (c) => (
+        <Button
+          variant="outline"
+          size="sm"
+          iconLeft={Play}
+          loading={runningId === c.id}
+          onClick={(e) => {
+            e.stopPropagation()
+            onRunCompany(c.id)
+          }}
+        >
+          Run
+        </Button>
+      )
+    }
+  ]
+
   return (
-    <div
-      className={cn(
-        'flex flex-col gap-2 px-6 py-5',
-        middle && 'border-x border-line'
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <span className="grid size-5 place-items-center rounded-full border border-line bg-surface text-[10px] font-mono font-semibold text-ink-muted">
-          {index}
+    <div className="flex min-h-0 flex-1 flex-col bg-surface">
+      <Toolbar>
+        <span className="text-sm font-medium text-ink">{workingCompanies.length} working</span>
+        <span className="text-xs text-ink-muted">
+          {totalPending} pending {totalPending === 1 ? 'draft' : 'drafts'}
         </span>
-        <Icon className="size-3.5 text-ink-faint" />
-        <span className="text-sm font-medium text-ink">{title}</span>
-      </div>
-      <p className="text-xs leading-relaxed text-ink-muted">{description}</p>
+        <ToolbarSpacer />
+        <Button variant="outline" size="md" iconLeft={Inbox} onClick={onGoToDrafts}>
+          Review drafts
+        </Button>
+        <Button variant="outline" size="md" iconLeft={Building2} onClick={onGoToCompanies}>
+          Pick more accounts
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Refresh"
+          onClick={onRefresh}
+          loading={loading && workingCompanies.length > 0}
+        >
+          {!(loading && workingCompanies.length > 0) ? <RefreshCw /> : null}
+        </Button>
+      </Toolbar>
+      <DataTable
+        columns={columns}
+        rows={workingCompanies}
+        rowKey={(c) => c.id}
+        loading={loading}
+        onRowClick={onSelectCompany}
+        selectedRowKey={selectedKey}
+        minWidth="1000px"
+        empty={{
+          icon: Mail,
+          title: 'No active outreach yet',
+          description:
+            'Pick accounts from Companies, assign a mailbox, and start working them. They will appear here as the agent runs.',
+          primaryAction: {
+            label: 'Pick accounts',
+            icon: Building2,
+            onClick: onGoToCompanies
+          }
+        }}
+      />
     </div>
   )
 }

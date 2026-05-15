@@ -1,7 +1,9 @@
 import {
   Activity,
   Building2,
+  Inbox,
   Mail,
+  Plug,
   Plus,
   RefreshCw,
   Search,
@@ -15,6 +17,8 @@ import {
   type Campaign,
   type CampaignRun,
   type Company,
+  type DraftQueueRow,
+  type Mailbox,
   type Person,
   type UsageByCampaignRow,
   type UsageByRunRow
@@ -29,10 +33,19 @@ import { CampaignsPage } from '@/pages/CampaignsPage'
 import { CompaniesPage } from '@/pages/CompaniesPage'
 import { CrawlsPage } from '@/pages/CrawlsPage'
 import { DetailDrawer } from '@/pages/DetailDrawer'
+import { DraftsPage } from '@/pages/DraftsPage'
+import { MailboxesPage } from '@/pages/MailboxesPage'
 import { PeoplePage } from '@/pages/PeoplePage'
 import { UsagePage } from '@/pages/UsagePage'
 
-type TabId = 'people' | 'companies' | 'crawls' | 'campaigns' | 'usage'
+type TabId =
+  | 'people'
+  | 'companies'
+  | 'crawls'
+  | 'campaigns'
+  | 'drafts'
+  | 'mailboxes'
+  | 'usage'
 type DetailSelection =
   | { type: 'person'; id: string }
   | { type: 'company'; id: string }
@@ -53,12 +66,16 @@ const sections: SidebarSection<TabId>[] = [
     label: 'Workflows',
     items: [
       { id: 'crawls', label: 'Crawls', icon: Search },
-      { id: 'campaigns', label: 'Campaigns', icon: Mail }
+      { id: 'campaigns', label: 'Campaigns', icon: Mail },
+      { id: 'drafts', label: 'Drafts', icon: Inbox }
     ]
   },
   {
     label: 'Operations',
-    items: [{ id: 'usage', label: 'Usage', icon: Activity }]
+    items: [
+      { id: 'mailboxes', label: 'Mailboxes', icon: Plug },
+      { id: 'usage', label: 'Usage', icon: Activity }
+    ]
   }
 ]
 
@@ -66,7 +83,18 @@ const headerCopy: Record<TabId, { title: string; description: string }> = {
   people: { title: 'People', description: 'Prospects discovered from crawls.' },
   companies: { title: 'Companies', description: 'Accounts found during research.' },
   crawls: { title: 'Crawls', description: 'ICP research jobs and workflow runs.' },
-  campaigns: { title: 'Campaigns', description: 'Email campaigns and drafts.' },
+  campaigns: {
+    title: 'Campaigns',
+    description: 'Accounts the outreach agent is currently working.'
+  },
+  drafts: {
+    title: 'Drafts',
+    description: 'Daily review queue. Approve to send, discard, or regenerate.'
+  },
+  mailboxes: {
+    title: 'Mailboxes',
+    description: 'Connect Gmail accounts the agent can send from on your approval.'
+  },
   usage: {
     title: 'Usage',
     description: 'Spend, tokens, and call volume across crawls and accounts.'
@@ -97,6 +125,11 @@ export default function App() {
       { totals: UsageByCampaignRow | null; runs: UsageByRunRow[] } | undefined
     >
   >({})
+  const [mailboxes, setMailboxes] = useState<Mailbox[]>([])
+  const [mailboxesLoading, setMailboxesLoading] = useState(false)
+  const [pendingDraftsByCompany, setPendingDraftsByCompany] = useState<Map<string, number>>(
+    new Map()
+  )
   const [paletteOpen, setPaletteOpen] = useState(false)
 
   const [name, setName] = useState('My ICP run')
@@ -163,6 +196,34 @@ export default function App() {
     }
   }, [])
 
+  const loadMailboxes = useCallback(async () => {
+    setMailboxesLoading(true)
+    try {
+      const data = await apiGet<Mailbox[]>('/mailboxes')
+      setMailboxes(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load mailboxes')
+    } finally {
+      setMailboxesLoading(false)
+    }
+  }, [])
+
+  const loadPendingDrafts = useCallback(async () => {
+    try {
+      const res = await apiGet<{ data: DraftQueueRow[] }>(
+        '/drafts?status=pending_review&limit=200'
+      )
+      const map = new Map<string, number>()
+      for (const row of res.data) {
+        if (!row.company) continue
+        map.set(row.company.id, (map.get(row.company.id) ?? 0) + 1)
+      }
+      setPendingDraftsByCompany(map)
+    } catch {
+      // non-fatal
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -171,6 +232,8 @@ export default function App() {
         await loadCrawls()
         await loadCompanies()
         await loadPeople()
+        await loadMailboxes()
+        await loadPendingDrafts()
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Failed to load data')
@@ -182,7 +245,21 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [loadCompanies, loadCrawls, loadPeople])
+  }, [loadCompanies, loadCrawls, loadPeople, loadMailboxes, loadPendingDrafts])
+
+  async function runCompanyOutreach(companyId: string) {
+    setRunningId(companyId)
+    setError(null)
+    try {
+      await apiPost('/companies/' + companyId + '/outreach/run')
+      await loadCompanies(0)
+      await loadPendingDrafts()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Run failed')
+    } finally {
+      setRunningId(null)
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -311,8 +388,24 @@ export default function App() {
         label: 'Go to Campaigns',
         group: 'Jump to',
         icon: Mail,
-        keywords: 'outreach emails',
+        keywords: 'outreach emails working accounts',
         onSelect: () => setActiveTab('campaigns')
+      },
+      {
+        id: 'nav:drafts',
+        label: 'Go to Drafts',
+        group: 'Jump to',
+        icon: Inbox,
+        keywords: 'review approve outreach pending',
+        onSelect: () => setActiveTab('drafts')
+      },
+      {
+        id: 'nav:mailboxes',
+        label: 'Go to Mailboxes',
+        group: 'Jump to',
+        icon: Plug,
+        keywords: 'gmail connect oauth inbox',
+        onSelect: () => setActiveTab('mailboxes')
       },
       {
         id: 'nav:usage',
@@ -425,8 +518,31 @@ export default function App() {
         )
       case 'campaigns':
         return (
-          <Button variant="primary" size="md" iconLeft={Plus} disabled>
-            New campaign
+          <Button
+            variant="outline"
+            size="md"
+            iconLeft={RefreshCw}
+            onClick={() => {
+              void loadCompanies(0)
+              void loadPendingDrafts()
+            }}
+            loading={companiesLoading && companies.length > 0}
+          >
+            Refresh
+          </Button>
+        )
+      case 'drafts':
+        return null
+      case 'mailboxes':
+        return (
+          <Button
+            variant="outline"
+            size="md"
+            iconLeft={RefreshCw}
+            onClick={() => void loadMailboxes()}
+            loading={mailboxesLoading && mailboxes.length > 0}
+          >
+            Refresh
           </Button>
         )
       case 'usage':
@@ -482,12 +598,18 @@ export default function App() {
         <CompaniesPage
           companies={companies}
           people={people}
+          mailboxes={mailboxes}
+          pendingDraftsByCompany={pendingDraftsByCompany}
           loading={companiesLoading}
           hasMore={companiesHasMore}
-          onRefresh={() => void loadCompanies(0)}
+          onRefresh={() => {
+            void loadCompanies(0)
+            void loadPendingDrafts()
+          }}
           onLoadMore={loadMoreCompanies}
           onSelectCompany={(company) => setDetail({ type: 'company', id: company.id })}
           selectedKey={selectedKey}
+          onError={(msg) => setError(msg)}
         />
       ) : null}
 
@@ -512,7 +634,32 @@ export default function App() {
       ) : null}
 
       {activeTab === 'campaigns' ? (
-        <CampaignsPage onGoToCrawls={() => setActiveTab('crawls')} />
+        <CampaignsPage
+          companies={companies}
+          mailboxes={mailboxes}
+          pendingDraftsByCompany={pendingDraftsByCompany}
+          loading={companiesLoading}
+          onRefresh={() => {
+            void loadCompanies(0)
+            void loadPendingDrafts()
+          }}
+          onSelectCompany={(company) => setDetail({ type: 'company', id: company.id })}
+          onGoToDrafts={() => setActiveTab('drafts')}
+          onGoToCompanies={() => setActiveTab('companies')}
+          onRunCompany={(id) => void runCompanyOutreach(id)}
+          runningId={runningId}
+          selectedKey={selectedKey}
+        />
+      ) : null}
+
+      {activeTab === 'drafts' ? <DraftsPage mailboxes={mailboxes} /> : null}
+
+      {activeTab === 'mailboxes' ? (
+        <MailboxesPage
+          mailboxes={mailboxes}
+          loading={mailboxesLoading}
+          onRefresh={() => void loadMailboxes()}
+        />
       ) : null}
 
       {activeTab === 'usage' ? (
@@ -540,9 +687,15 @@ export default function App() {
         crawlRunsLoading={crawlRunsLoading}
         crawlUsage={selectedCrawlUsage}
         runningId={runningId}
+        mailboxes={mailboxes}
         onSelectPerson={(person) => setDetail({ type: 'person', id: person.id })}
         onSelectCompany={(companyId) => setDetail({ type: 'company', id: companyId })}
         onRunCrawl={startRun}
+        onCompanyChanged={() => {
+          void loadCompanies(0)
+          void loadPendingDrafts()
+        }}
+        onError={(msg) => setError(msg)}
       />
 
       <CommandPalette

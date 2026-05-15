@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "workflow:start": "node dist/workflows/entry.js"
+    "workflow:start": "node dist/workflows/entry.js",
+    "cron:sweep": "node dist/workflows/scripts/triggerSweep.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",

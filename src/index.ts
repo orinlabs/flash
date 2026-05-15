@@ -10,6 +10,8 @@ import path from 'node:path'
 import { db, pool } from './db/client.js'
 import { campaignsRoutes } from './routes/campaigns.js'
 import { companiesRoutes } from './routes/companies.js'
+import { draftsRoutes } from './routes/drafts.js'
+import { mailboxesRoutes } from './routes/mailboxes.js'
 import { peopleRoutes } from './routes/people.js'
 import { usageRoutes } from './routes/usage.js'
 
@@ -34,6 +36,8 @@ app.get('/ready', async (c) => {
 
 app.route('/campaigns', campaignsRoutes)
 app.route('/companies', companiesRoutes)
+app.route('/drafts', draftsRoutes)
+app.route('/mailboxes', mailboxesRoutes)
 app.route('/people', peopleRoutes)
 app.route('/usage', usageRoutes)
 

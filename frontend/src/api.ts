@@ -28,6 +28,20 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return parseJson<T>(res)
 }
 
+export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(buildUrl(path), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })
+  return parseJson<T>(res)
+}
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  const res = await fetch(buildUrl(path), { method: 'DELETE' })
+  return parseJson<T>(res)
+}
+
 export type Campaign = {
   id: string
   name: string
@@ -49,6 +63,13 @@ export type CampaignRun = {
   updatedAt: string
 }
 
+export type OutreachStatus =
+  | 'dormant'
+  | 'working'
+  | 'paused'
+  | 'completed'
+  | 'dead'
+
 export type Company = {
   id: string
   name: string
@@ -58,8 +79,83 @@ export type Company = {
   employeeRange: string | null
   hqLocation: string | null
   enrichmentPayload: Record<string, unknown> | null
+  outreachStatus: OutreachStatus
+  outreachMailboxId: string | null
+  outreachStrategy: string | null
+  outreachNextWakeAt: string | null
+  outreachStartedAt: string | null
+  outreachLastWorkedAt: string | null
+  outreachCompletedAt: string | null
   createdAt: string
   updatedAt: string
+}
+
+export type Mailbox = {
+  id: string
+  email: string
+  displayName: string | null
+  signature: string | null
+  senderBio: string | null
+  scopes: string | null
+  status: 'active' | 'revoked'
+  hasRefreshToken: boolean
+  hasAccessToken: boolean
+  oauthExpiresAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type OutreachEvent = {
+  id: string
+  companyId: string
+  kind: string
+  summary: string
+  details: Record<string, unknown> | null
+  sourceUrl: string | null
+  createdAt: string
+}
+
+export type OutreachDraftStatus =
+  | 'pending_review'
+  | 'approved'
+  | 'sent'
+  | 'discarded'
+  | 'failed'
+
+export type OutreachDraft = {
+  id: string
+  companyId: string
+  mailboxId: string
+  personId: string | null
+  toEmail: string
+  subject: string
+  body: string
+  bodyHtml: string | null
+  status: OutreachDraftStatus
+  reviewNotes: string | null
+  agentRationale: string | null
+  sentAt: string | null
+  gmailMessageId: string | null
+  gmailThreadId: string | null
+  sendError: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type DraftQueueRow = {
+  draft: OutreachDraft
+  company: { id: string; name: string; domain: string | null } | null
+  mailbox: { id: string; email: string; displayName: string | null } | null
+  person: { id: string; fullName: string | null; title: string | null } | null
+}
+
+export type DraftDetail = {
+  draft: OutreachDraft
+  company: Company | null
+  mailbox: { id: string; email: string; displayName: string | null } | null
+  person: Person | null
+  strategy: string | null
+  recentEvents: OutreachEvent[]
 }
 
 export type UsageTotals = {

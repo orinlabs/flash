@@ -23,6 +23,13 @@ export const companies = pgTable(
     employeeRange: text('employee_range'),
     hqLocation: text('hq_location'),
     enrichmentPayload: jsonb('enrichment_payload').$type<Record<string, unknown>>(),
+    outreachStatus: text('outreach_status').notNull().default('dormant'),
+    outreachMailboxId: uuid('outreach_mailbox_id'),
+    outreachStrategy: text('outreach_strategy'),
+    outreachNextWakeAt: timestamp('outreach_next_wake_at', { withTimezone: true }),
+    outreachStartedAt: timestamp('outreach_started_at', { withTimezone: true }),
+    outreachLastWorkedAt: timestamp('outreach_last_worked_at', { withTimezone: true }),
+    outreachCompletedAt: timestamp('outreach_completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
   },
@@ -30,7 +37,83 @@ export const companies = pgTable(
     uniqueIndex('companies_domain_lower_unique')
       .on(sql`lower(trim(${t.domain}))`)
       .where(sql`${t.domain} is not null`),
-    index('companies_name_idx').on(t.name)
+    index('companies_name_idx').on(t.name),
+    index('companies_outreach_status_idx').on(t.outreachStatus),
+    index('companies_outreach_wake_idx').on(t.outreachNextWakeAt)
+  ]
+)
+
+export const mailboxes = pgTable(
+  'mailboxes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    displayName: text('display_name'),
+    signature: text('signature'),
+    senderBio: text('sender_bio'),
+    oauthRefreshToken: text('oauth_refresh_token'),
+    oauthAccessToken: text('oauth_access_token'),
+    oauthExpiresAt: timestamp('oauth_expires_at', { withTimezone: true }),
+    scopes: text('scopes'),
+    status: text('status').notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    uniqueIndex('mailboxes_email_lower_unique').on(sql`lower(${t.email})`),
+    index('mailboxes_status_idx').on(t.status)
+  ]
+)
+
+export const outreachEvents = pgTable(
+  'outreach_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    summary: text('summary').notNull(),
+    details: jsonb('details').$type<Record<string, unknown>>(),
+    sourceUrl: text('source_url'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    index('outreach_events_company_idx').on(t.companyId),
+    index('outreach_events_created_idx').on(t.createdAt)
+  ]
+)
+
+export const outreachDrafts = pgTable(
+  'outreach_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    mailboxId: uuid('mailbox_id')
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: 'restrict' }),
+    personId: uuid('person_id').references(() => people.id, { onDelete: 'set null' }),
+    toEmail: text('to_email').notNull(),
+    subject: text('subject').notNull(),
+    body: text('body').notNull(),
+    bodyHtml: text('body_html'),
+    status: text('status').notNull().default('pending_review'),
+    reviewNotes: text('review_notes'),
+    agentRationale: text('agent_rationale'),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    gmailMessageId: text('gmail_message_id'),
+    gmailThreadId: text('gmail_thread_id'),
+    sendError: text('send_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    index('outreach_drafts_company_idx').on(t.companyId),
+    index('outreach_drafts_mailbox_idx').on(t.mailboxId),
+    index('outreach_drafts_status_idx').on(t.status),
+    index('outreach_drafts_created_idx').on(t.createdAt)
   ]
 )
 
@@ -164,3 +247,6 @@ export type Campaign = typeof campaigns.$inferSelect
 export type CampaignRun = typeof campaignRuns.$inferSelect
 export type DiscoveryEvent = typeof discoveryEvents.$inferSelect
 export type UsageEvent = typeof usageEvents.$inferSelect
+export type Mailbox = typeof mailboxes.$inferSelect
+export type OutreachEvent = typeof outreachEvents.$inferSelect
+export type OutreachDraft = typeof outreachDrafts.$inferSelect

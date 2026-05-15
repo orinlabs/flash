@@ -1,35 +1,47 @@
-import { Building2, ChevronRight, Filter, RefreshCw, Search } from 'lucide-react'
+import { Building2, ChevronRight, Filter, Pause, Play, RefreshCw, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import { apiPatch, apiPost, type Company, type Mailbox, type Person } from '@/api'
 import { Button } from '@/components/ui/button'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { Input } from '@/components/ui/input'
+import { StatusDot } from '@/components/ui/status-dot'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
-import { faviconUrl } from '@/lib/format'
-import type { Company, Person } from '@/api'
+import { faviconUrl, formatRelative } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 interface Props {
   companies: Company[]
   people: Person[]
+  mailboxes: Mailbox[]
+  pendingDraftsByCompany: Map<string, number>
   loading: boolean
   hasMore: boolean
   onRefresh: () => void
   onLoadMore: () => void
   onSelectCompany: (company: Company) => void
   selectedKey: string | null
+  onError: (msg: string) => void
 }
 
 export function CompaniesPage({
   companies,
   people,
+  mailboxes,
+  pendingDraftsByCompany,
   loading,
   hasMore,
   onRefresh,
   onLoadMore,
   onSelectCompany,
-  selectedKey
+  selectedKey,
+  onError
 }: Props) {
   const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkMailboxId, setBulkMailboxId] = useState<string | null>(null)
+  const [bulkStarting, setBulkStarting] = useState(false)
+  const [bulkPausing, setBulkPausing] = useState(false)
 
   const peopleByCompany = useMemo(() => {
     const map = new Map<string, number>()
@@ -50,11 +62,100 @@ export function CompaniesPage({
     )
   }, [search, companies])
 
+  const mailboxById = useMemo(() => new Map(mailboxes.map((m) => [m.id, m])), [mailboxes])
+  const activeMailboxes = useMemo(
+    () => mailboxes.filter((m) => m.status === 'active'),
+    [mailboxes]
+  )
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function selectAllVisible(check: boolean) {
+    if (!check) {
+      setSelected(new Set())
+      return
+    }
+    setSelected(new Set(filtered.map((c) => c.id)))
+  }
+
+  const allVisibleSelected =
+    filtered.length > 0 && filtered.every((c) => selected.has(c.id))
+
+  async function bulkStart() {
+    if (selected.size === 0) return
+    if (!bulkMailboxId) {
+      onError('Pick a mailbox before starting.')
+      return
+    }
+    setBulkStarting(true)
+    try {
+      await apiPost('/companies/outreach/start', {
+        companyIds: Array.from(selected),
+        mailboxId: bulkMailboxId
+      })
+      setSelected(new Set())
+      onRefresh()
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Bulk start failed')
+    } finally {
+      setBulkStarting(false)
+    }
+  }
+
+  async function bulkSetStatus(status: 'paused' | 'completed' | 'dormant') {
+    if (selected.size === 0) return
+    setBulkPausing(true)
+    try {
+      await Promise.all(
+        Array.from(selected).map((id) =>
+          apiPatch('/companies/' + id + '/outreach/status', { status })
+        )
+      )
+      setSelected(new Set())
+      onRefresh()
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Bulk update failed')
+    } finally {
+      setBulkPausing(false)
+    }
+  }
+
   const columns: DataTableColumn<Company>[] = [
+    {
+      id: 'select',
+      header: (
+        <input
+          type="checkbox"
+          aria-label="Select all"
+          checked={allVisibleSelected}
+          onChange={(e) => selectAllVisible(e.target.checked)}
+          onClick={(e) => e.stopPropagation()}
+          className="size-3.5 rounded border-line accent-accent"
+        />
+      ),
+      width: '36px',
+      cell: (c) => (
+        <input
+          type="checkbox"
+          aria-label={'Select ' + c.name}
+          checked={selected.has(c.id)}
+          onChange={() => toggleSelected(c.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="size-3.5 rounded border-line accent-accent"
+        />
+      )
+    },
     {
       id: 'name',
       header: 'Company',
-      width: '28%',
+      width: '24%',
       cell: (c) => {
         const fav = faviconUrl(c.domain ?? c.website)
         return (
@@ -75,9 +176,61 @@ export function CompaniesPage({
       }
     },
     {
+      id: 'outreach',
+      header: 'Outreach',
+      width: '140px',
+      cell: (c) => <StatusDot status={c.outreachStatus} size="sm" />
+    },
+    {
+      id: 'mailbox',
+      header: 'Mailbox',
+      width: '180px',
+      cell: (c) => {
+        if (!c.outreachMailboxId) return <span className="text-ink-faint">-</span>
+        const m = mailboxById.get(c.outreachMailboxId)
+        return (
+          <span className="truncate font-mono text-[12px] text-ink-muted">
+            {m?.email ?? '(missing)'}
+          </span>
+        )
+      }
+    },
+    {
+      id: 'drafts',
+      header: 'Drafts',
+      align: 'right',
+      width: '70px',
+      cell: (c) => {
+        const n = pendingDraftsByCompany.get(c.id) ?? 0
+        return (
+          <span
+            className={cn(
+              'font-mono tabular text-[12.5px]',
+              n > 0 ? 'text-warn' : 'text-ink-faint'
+            )}
+          >
+            {n}
+          </span>
+        )
+      }
+    },
+    {
+      id: 'wake',
+      header: 'Next wake',
+      width: '140px',
+      cell: (c) =>
+        c.outreachStatus === 'working' && c.outreachNextWakeAt ? (
+          <span className="truncate text-[12.5px] text-ink-muted">
+            {formatRelative(c.outreachNextWakeAt) ?? '-'}
+          </span>
+        ) : (
+          <span className="text-ink-faint">-</span>
+        )
+    },
+    {
       id: 'domain',
       header: 'Domain',
-      width: '22%',
+      width: '18%',
       cell: (c) =>
         c.website || c.domain ? (
           <a
@@ -94,32 +247,10 @@ export function CompaniesPage({
         )
     },
     {
-      id: 'industry',
-      header: 'Industry',
-      width: '18%',
-      cell: (c) =>
-        c.industry ? (
-          <span className="truncate text-ink-muted">{c.industry}</span>
-        ) : (
-          <span className="text-ink-faint">-</span>
-        )
-    },
-    {
-      id: 'hq',
-      header: 'HQ',
-      width: '18%',
-      cell: (c) =>
-        c.hqLocation ? (
-          <span className="truncate text-ink-muted">{c.hqLocation}</span>
-        ) : (
-          <span className="text-ink-faint">-</span>
-        )
-    },
-    {
       id: 'people',
       header: 'People',
       align: 'right',
-      width: '90px',
+      width: '70px',
       cell: (c) => {
         const count = peopleByCompany.get(c.id) ?? 0
         return (
@@ -162,6 +293,56 @@ export function CompaniesPage({
           {!(loading && companies.length > 0) ? <RefreshCw /> : null}
         </Button>
       </Toolbar>
+      {selected.size > 0 ? (
+        <div className="flex items-center gap-3 border-b border-line bg-accent-soft px-5 py-2">
+          <span className="text-sm font-medium text-ink">
+            {selected.size} selected
+          </span>
+          <select
+            value={bulkMailboxId ?? ''}
+            onChange={(e) => setBulkMailboxId(e.target.value || null)}
+            className="h-8 rounded-md border border-line bg-surface px-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/25"
+          >
+            <option value="">Pick a mailbox...</option>
+            {activeMailboxes.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.email}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="primary"
+            size="sm"
+            iconLeft={Play}
+            disabled={!bulkMailboxId}
+            loading={bulkStarting}
+            onClick={bulkStart}
+          >
+            Start working
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            iconLeft={Pause}
+            loading={bulkPausing}
+            onClick={() => bulkSetStatus('paused')}
+          >
+            Pause
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            loading={bulkPausing}
+            onClick={() => bulkSetStatus('completed')}
+          >
+            Mark completed
+          </Button>
+          <ToolbarSpacer />
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      ) : null}
       <DataTable
         columns={columns}
         rows={filtered}
@@ -171,7 +352,7 @@ export function CompaniesPage({
         onLoadMore={onLoadMore}
         onRowClick={onSelectCompany}
         selectedRowKey={selectedKey}
-        minWidth="900px"
+        minWidth="1100px"
         empty={{
           icon: Building2,
           title: 'No companies yet',

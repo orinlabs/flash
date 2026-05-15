@@ -34,7 +34,17 @@ const STATUS_MAP: Record<string, { tone: StatusTone; label?: string }> = {
   new: { tone: 'accent' },
   qualified: { tone: 'success' },
   contacted: { tone: 'info' },
-  unqualified: { tone: 'neutral' }
+  unqualified: { tone: 'neutral' },
+  // Outreach (account-level)
+  dormant: { tone: 'neutral' },
+  working: { tone: 'info' },
+  paused: { tone: 'warning' },
+  dead: { tone: 'error' },
+  // Outreach drafts
+  pending_review: { tone: 'warning', label: 'pending review' },
+  approved: { tone: 'info' },
+  sent: { tone: 'success' },
+  discarded: { tone: 'neutral' }
 }
 
 export function statusToTone(status: string): { tone: StatusTone; label: string } {

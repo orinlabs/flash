@@ -106,3 +106,22 @@ export async function attributeUsageToPerson(
     console.error('[usage] failed to backfill attribution:', err)
   }
 }
+
+/**
+ * Outreach work isn't tied to a campaign/run, so we attribute by company.
+ * Sets the context's companyId and backfills any already-recorded events.
+ */
+export async function attributeUsageToCompany(companyId: string): Promise<void> {
+  const ctx = storage.getStore()
+  if (!ctx) return
+  ctx.attribution.companyId = companyId
+  if (ctx.collectedIds.length === 0) return
+  try {
+    await db
+      .update(usageEvents)
+      .set({ companyId })
+      .where(inArray(usageEvents.id, ctx.collectedIds))
+  } catch (err) {
+    console.error('[usage] failed to backfill company attribution:', err)
+  }
+}
