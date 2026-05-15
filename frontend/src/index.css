@@ -110,6 +110,27 @@
     --ring: 175 75% 48%;
   }
 
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: 0 0% 4%; /* #0A0A0A */
+      --surface: 0 0% 7%; /* #111111 */
+      --surface-muted: 0 0% 10%;
+      --surface-sunken: 0 0% 5%;
+      --border-subtle: 0 0% 12%; /* #1F1F1F */
+      --border-strong: 0 0% 18%;
+      --text: 0 0% 93%; /* #EDEDED */
+      --text-muted: 0 0% 63%;
+      --text-faint: 0 0% 45%;
+      --accent: 175 75% 48%;
+      --accent-hover: 175 75% 56%;
+      --accent-soft: 175 60% 14%;
+      --accent-fg: 0 0% 6%;
+      --primary: 0 0% 100%;
+      --primary-fg: 0 0% 6%;
+      --ring: 175 75% 48%;
+    }
+  }
+
   * {
     border-color: hsl(var(--border-subtle));
   }
