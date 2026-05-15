@@ -149,7 +149,7 @@ function HomeRoute({ authUser }: { authUser: AuthUser | null }) {
   return <Navigate to="/login" replace state={{ from: '/' }} />
 }
 
-function ProspectorApp({
+function FlashApp({
   authUser,
   setAuthUser
 }: {
@@ -859,7 +859,7 @@ export default function App() {
         path="/:tab"
         element={
           authUser ? (
-            <ProspectorApp authUser={authUser} setAuthUser={setAuthUser} />
+            <FlashApp authUser={authUser} setAuthUser={setAuthUser} />
           ) : (
             <NavigateToLogin />
           )

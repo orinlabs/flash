@@ -56,7 +56,7 @@ app.use('*', async (c, next) => {
   await next()
 })
 
-app.get('/health', (c) => c.json({ ok: true, service: 'icp-prospector-api' }))
+app.get('/health', (c) => c.json({ ok: true, service: 'flash-api' }))
 
 app.get('/ready', async (c) => {
   if (!process.env.DATABASE_URL) {

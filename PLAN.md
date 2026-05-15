@@ -1,4 +1,4 @@
-# ICP Prospector — Product & Technical Plan
+# Flash — Product & Technical Plan
 
 This document breaks the vision into phases, proposes a data model and system shape, and records **locked decisions** plus a small set of optional follow-ups.
 
@@ -137,7 +137,7 @@ This Cursor environment did **not** have a **`RENDER_API_KEY`**, so services wer
 
 1. Push this repository to GitHub (org or account that Orin Labs can access).
 2. In [Render Dashboard](https://dashboard.render.com), switch the workspace to **Orin Labs**.
-3. **New** → **Blueprint** → connect the repo → confirm **`render.yaml`** is detected → apply (creates **Postgres** + **icp-prospector-api** web service).
+3. **New** → **Blueprint** → connect the repo → confirm **`render.yaml`** is detected → apply (creates **Postgres** + **flash-api** web service).
 4. **New** → **Workflow** (or follow [Your first workflow](https://render.com/docs/workflows)) → same repo → smallest instance type; set env vars (same `DATABASE_URL` pattern, plus `OPENAI_API_KEY`, `EXA_API_KEY`, etc. when ready).
 5. From the API, use the Render SDK to **start workflow tasks** (e.g. `prospectCampaign`) when you add that code path.
 

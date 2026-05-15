@@ -16,7 +16,7 @@ import {
 } from '../lib/authApp.js'
 import { sendOrinlabsLoginCode } from '../lib/sendLoginCodeEmail.js'
 
-export const SESSION_COOKIE_NAME = 'icp_session'
+export const SESSION_COOKIE_NAME = 'flash_session'
 
 const requestCodeSchema = z.object({
   email: z.string().min(3).max(320)

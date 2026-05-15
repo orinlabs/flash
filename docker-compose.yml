@@ -4,11 +4,11 @@ services:
     ports:
       - '5432:5432'
     environment:
-      POSTGRES_USER: icp
-      POSTGRES_PASSWORD: icp
-      POSTGRES_DB: icp_prospector
+      POSTGRES_USER: flash
+      POSTGRES_PASSWORD: flash
+      POSTGRES_DB: flash
     volumes:
-      - icp_pg:/var/lib/postgresql/data
+      - flash_pg:/var/lib/postgresql/data
 
 volumes:
-  icp_pg:
+  flash_pg:

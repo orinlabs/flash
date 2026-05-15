@@ -59,7 +59,7 @@ export function LoginPage({ onAuthed }: LoginPageProps) {
   return (
     <div className="flex min-h-svh flex-col items-center justify-center bg-bg px-4 text-ink">
       <div className="w-full max-w-sm rounded-xl border border-line bg-surface p-8 shadow-sm">
-        <h1 className="text-lg font-semibold tracking-tight">Sign in to Prospector</h1>
+        <h1 className="text-lg font-semibold tracking-tight">Sign in to Flash</h1>
         <p className="mt-1.5 text-sm text-ink-muted">
           Use your <span className="font-medium text-ink">@orinlabs.ai</span> email. We will email you
           a one-time code.

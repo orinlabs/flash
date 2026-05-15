@@ -623,8 +623,8 @@ async function callOpenRouter(messages: ChatMessage[]): Promise<{
     headers: {
       Authorization: `Bearer ${requiredEnv('OPENROUTER_API_KEY')}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://icp-prospector-api.onrender.com',
-      'X-Title': 'ICP Prospector Agent'
+      'HTTP-Referer': 'https://api.flash.orinlabs.ai',
+      'X-Title': 'Flash Agent'
     },
     body: JSON.stringify({
       model,

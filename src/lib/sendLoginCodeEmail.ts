@@ -1,7 +1,7 @@
 import { Resend } from 'resend'
 
 /** Used when `RESEND_FROM_EMAIL` is unset. Verify `donotreply.orinlabs.ai` at https://resend.com/domains */
-const DEFAULT_RESEND_FROM = 'Prospector <noreply@donotreply.orinlabs.ai>'
+const DEFAULT_RESEND_FROM = 'Flash <noreply@donotreply.orinlabs.ai>'
 
 function escapeHtml(value: string): string {
   return value
@@ -14,7 +14,7 @@ function escapeHtml(value: string): string {
 
 function buildHtml(code: string): string {
   return (
-    '<p>Your Prospector verification code is:</p>' +
+    '<p>Your Flash verification code is:</p>' +
     '<p style="font-size:24px;font-weight:700;letter-spacing:0.2em;font-family:monospace">' +
     escapeHtml(code) +
     '</p>' +
@@ -32,7 +32,7 @@ export async function sendOrinlabsLoginCode(toEmail: string, code: string): Prom
   const { error } = await resend.emails.send({
     from,
     to: toEmail,
-    subject: 'Your Prospector sign-in code',
+    subject: 'Your Flash sign-in code',
     html: buildHtml(code)
   })
   if (error) {

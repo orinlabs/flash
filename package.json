@@ -1,8 +1,8 @@
 {
-  "name": "icp-prospector",
+  "name": "flash",
   "private": true,
   "version": "0.0.1",
-  "description": "ICP prospecting API + Render Workflows",
+  "description": "Flash prospecting API + Render Workflows",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=20"

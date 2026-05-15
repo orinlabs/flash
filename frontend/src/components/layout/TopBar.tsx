@@ -67,7 +67,7 @@ function BrandMark() {
           <path d="M10 10 13.5 13.5" />
         </svg>
       </div>
-      <span className="text-[13px] font-semibold tracking-tight">prospector</span>
+      <span className="text-[13px] font-semibold tracking-tight">flash</span>
     </div>
   )
 }
