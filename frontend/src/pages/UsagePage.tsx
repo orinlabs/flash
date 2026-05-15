@@ -109,38 +109,39 @@ export function UsagePage({
   const overall = summary?.overall
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-bg">
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-6">
-        <Toolbar>
-          <div className="flex items-center gap-1 rounded-md border border-line bg-surface p-0.5">
-            {RANGES.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => setRangeId(r.id)}
-                className={cn(
-                  'h-6 rounded px-2 text-xs transition-colors',
-                  r.id === rangeId
-                    ? 'bg-surface-muted text-ink ring-1 ring-line'
-                    : 'text-ink-muted hover:text-ink'
-                )}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-          <ToolbarSpacer />
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label="Refresh"
-            onClick={() => void load()}
-            loading={loading && summary !== null}
-          >
-            {!(loading && summary !== null) ? <RefreshCw /> : null}
-          </Button>
-        </Toolbar>
+    <div className="flex min-h-0 flex-1 flex-col bg-bg">
+      <Toolbar>
+        <div className="flex items-center gap-1 rounded-md border border-line bg-surface p-0.5">
+          {RANGES.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => setRangeId(r.id)}
+              className={cn(
+                'h-6 rounded px-2 text-xs transition-colors',
+                r.id === rangeId
+                  ? 'bg-surface-muted text-ink ring-1 ring-line'
+                  : 'text-ink-muted hover:text-ink'
+              )}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+        <ToolbarSpacer />
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Refresh"
+          onClick={() => void load()}
+          loading={loading && summary !== null}
+        >
+          {!(loading && summary !== null) ? <RefreshCw /> : null}
+        </Button>
+      </Toolbar>
 
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-6">
         {error ? (
           <Card>
             <CardContent>
@@ -239,6 +240,7 @@ export function UsagePage({
           }}
           loading={loading && recent.length === 0}
         />
+        </div>
       </div>
     </div>
   )
