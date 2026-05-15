@@ -307,7 +307,7 @@ function CompanyView({
   onError?: (msg: string) => void
 }) {
   return (
-    <DrawerTabs defaultValue="outreach" className="flex min-h-0 flex-1 flex-col">
+    <DrawerTabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
       <DrawerTabsList>
         <DrawerTabsTrigger value="outreach">Outreach</DrawerTabsTrigger>
         <DrawerTabsTrigger value="overview">Overview</DrawerTabsTrigger>
@@ -355,6 +355,7 @@ function CompanyView({
               }
             />
             <KV label="Employees" value={company.employeeRange} mono />
+            <KV label="Notes" value={company.notes} />
           </SectionCard>
           <SectionCard title="Meta">
             <KV label="Created" value={formatDate(company.createdAt)} />

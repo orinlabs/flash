@@ -22,6 +22,7 @@ export const companies = pgTable(
     industry: text('industry'),
     employeeRange: text('employee_range'),
     hqLocation: text('hq_location'),
+    notes: text('notes'),
     enrichmentPayload: jsonb('enrichment_payload').$type<Record<string, unknown>>(),
     outreachStatus: text('outreach_status').notNull().default('dormant'),
     outreachMailboxId: uuid('outreach_mailbox_id'),

@@ -98,6 +98,7 @@ export type Company = {
   industry: string | null
   employeeRange: string | null
   hqLocation: string | null
+  notes: string | null
   enrichmentPayload: Record<string, unknown> | null
   outreachStatus: OutreachStatus
   outreachMailboxId: string | null

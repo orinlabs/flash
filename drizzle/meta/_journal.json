@@ -43,6 +43,13 @@
       "when": 1778821000000,
       "tag": "0005_outreach_email_instructions",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778822220000,
+      "tag": "0006_company_notes",
+      "breakpoints": true
     }
   ]
 }

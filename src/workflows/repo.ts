@@ -66,6 +66,15 @@ export function normalizeName(value: string | null | undefined): string | null {
   return cleaned ? cleaned.toLowerCase() : null
 }
 
+function mergeNotes(existing: string | null | undefined, incoming: string | null | undefined): string | undefined {
+  const next = cleanNullable(incoming)
+  if (!next) return undefined
+  const cur = cleanNullable(existing)
+  if (!cur) return next
+  if (cur.includes(next)) return undefined
+  return `${cur}\n\n${next}`
+}
+
 function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as DbError).code === '23505'
 }
@@ -265,6 +274,7 @@ export type CompanySummary = {
   domain: string | null
   website: string | null
   industry: string | null
+  notes: string | null
 }
 
 export async function searchCompanies(input: {
@@ -279,7 +289,7 @@ export async function searchCompanies(input: {
   const q = cleanNullable(input.query)
   if (q) {
     const like = `%${q}%`
-    filters.push(or(ilike(companies.name, like), ilike(companies.domain, like)))
+    filters.push(or(ilike(companies.name, like), ilike(companies.domain, like), ilike(companies.notes, like)))
   }
   const where = filters.length ? and(...filters) : undefined
 
@@ -289,7 +299,8 @@ export async function searchCompanies(input: {
       name: companies.name,
       domain: companies.domain,
       website: companies.website,
-      industry: companies.industry
+      industry: companies.industry,
+      notes: companies.notes
     })
     .from(companies)
     .where(where)
@@ -310,6 +321,22 @@ export async function getCompany(id: string) {
   return row ?? null
 }
 
+export async function appendCompanyNotes(companyId: string, notes: string | null | undefined): Promise<void> {
+  const next = cleanNullable(notes)
+  if (!next) return
+  const [existing] = await db
+    .select({ notes: companies.notes })
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1)
+  const merged = mergeNotes(existing?.notes, next)
+  if (!merged) return
+  await db
+    .update(companies)
+    .set({ notes: merged, updatedAt: new Date() })
+    .where(eq(companies.id, companyId))
+}
+
 export async function getPersonCompanyId(personId: string): Promise<string | null> {
   const [row] = await db
     .select({ companyId: people.companyId })
@@ -327,6 +354,7 @@ export type CompanyDraft = {
   website?: string | null
   industry?: string | null
   hqLocation?: string | null
+  notes?: string | null
 }
 
 export async function upsertCompany(draft: CompanyDraft): Promise<string | null> {
@@ -343,12 +371,14 @@ export async function upsertCompany(draft: CompanyDraft): Promise<string | null>
       .where(sql`lower(trim(${companies.domain})) = ${domain}`)
       .limit(1)
     if (existing) {
+      const notes = mergeNotes(existing.notes, draft.notes)
       const [updated] = await db
         .update(companies)
         .set({
           website: existing.website ?? website ?? undefined,
           industry: existing.industry ?? cleanNullable(draft.industry) ?? undefined,
           hqLocation: existing.hqLocation ?? cleanNullable(draft.hqLocation) ?? undefined,
+          notes,
           updatedAt: new Date()
         })
         .where(eq(companies.id, existing.id))
@@ -363,12 +393,14 @@ export async function upsertCompany(draft: CompanyDraft): Promise<string | null>
     .where(sql`lower(trim(${companies.name})) = ${name.toLowerCase()}`)
     .limit(1)
   if (byName) {
-    if ((!byName.website && website) || (!byName.domain && domain)) {
+    const notes = mergeNotes(byName.notes, draft.notes)
+    if ((!byName.website && website) || (!byName.domain && domain) || notes) {
       const [updated] = await db
         .update(companies)
         .set({
           website: byName.website ?? website ?? undefined,
           domain: byName.domain ?? domain ?? undefined,
+          notes,
           updatedAt: new Date()
         })
         .where(eq(companies.id, byName.id))
@@ -391,6 +423,7 @@ export async function upsertCompany(draft: CompanyDraft): Promise<string | null>
         website,
         industry: cleanNullable(draft.industry) ?? undefined,
         hqLocation: cleanNullable(draft.hqLocation) ?? undefined,
+        notes: cleanNullable(draft.notes) ?? undefined,
         enrichmentPayload: { source: 'agent_creation' }
       })
       .returning()

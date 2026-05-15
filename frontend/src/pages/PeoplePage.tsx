@@ -1,4 +1,4 @@
-import { ChevronRight, ExternalLink, Filter, RefreshCw, Search, Users } from 'lucide-react'
+import { ChevronRight, ExternalLink, Filter, RefreshCw, Search, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { Avatar } from '@/components/ui/avatar'
@@ -9,6 +9,32 @@ import { StatusDot } from '@/components/ui/status-dot'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
 import { domainFromUrl, faviconUrl } from '@/lib/format'
 import type { Company, Person } from '@/api'
+
+const filterSelectClass =
+  'h-8 rounded-md border border-line bg-surface px-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/25'
+
+function collectSearchValues(value: unknown, depth = 0): string[] {
+  if (value === null || value === undefined || depth > 3) return []
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return [String(value)]
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectSearchValues(item, depth + 1))
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, item]) => [
+      key,
+      ...collectSearchValues(item, depth + 1)
+    ])
+  }
+  return []
+}
+
+function includesSearch(values: unknown[], q: string): boolean {
+  return values
+    .flatMap((value) => collectSearchValues(value))
+    .some((value) => value.toLowerCase().includes(q))
+}
 
 interface Props {
   people: Person[]
@@ -34,17 +60,109 @@ export function PeoplePage({
   selectedKey
 }: Props) {
   const [search, setSearch] = useState('')
+  const [companyFilter, setCompanyFilter] = useState('all')
+  const [lifecycleFilter, setLifecycleFilter] = useState('all')
+  const [contactFilter, setContactFilter] = useState('all')
+
+  const companyOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const out: Company[] = []
+    for (const person of people) {
+      if (!person.companyId || seen.has(person.companyId)) continue
+      const company = companyById.get(person.companyId)
+      if (!company) continue
+      seen.add(company.id)
+      out.push(company)
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name))
+  }, [people, companyById])
+
+  const lifecycleOptions = useMemo(() => {
+    return Array.from(new Set(people.map((p) => p.lifecycleStatus).filter(Boolean))).sort()
+  }, [people])
+
+  const activeFilterCount =
+    (companyFilter !== 'all' ? 1 : 0) +
+    (lifecycleFilter !== 'all' ? 1 : 0) +
+    (contactFilter !== 'all' ? 1 : 0)
+  const hasActiveFilters = activeFilterCount > 0
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return people
     return people.filter((p) => {
-      const company = p.companyId ? companyById.get(p.companyId)?.name : ''
-      return [p.fullName, p.email, p.title, company]
-        .filter(Boolean)
-        .some((v) => (v as string).toLowerCase().includes(q))
+      const company = p.companyId ? companyById.get(p.companyId) : null
+      const matchesSearch =
+        !q ||
+        includesSearch(
+          [
+            p.fullName,
+            p.email,
+            p.phone,
+            p.linkedinUrl,
+            p.twitterUrl,
+            p.title,
+            p.seniority,
+            p.department,
+            p.lifecycleStatus,
+            p.notes,
+            p.context,
+            p.icpKeywords,
+            p.enrichmentSources,
+            company?.name,
+            company?.domain,
+            company?.website,
+            company?.industry,
+            company?.employeeRange,
+            company?.hqLocation,
+            company?.outreachStatus,
+            company?.outreachStrategy,
+            company?.outreachEmailInstructions,
+            company?.enrichmentPayload
+          ],
+          q
+        )
+      const matchesCompany =
+        companyFilter === 'all' ||
+        (companyFilter === 'assigned' && Boolean(p.companyId)) ||
+        (companyFilter === 'unassigned' && !p.companyId) ||
+        p.companyId === companyFilter
+      const matchesLifecycle =
+        lifecycleFilter === 'all' || p.lifecycleStatus === lifecycleFilter
+      const matchesContact =
+        contactFilter === 'all' ||
+        (contactFilter === 'has_email' && Boolean(p.email)) ||
+        (contactFilter === 'missing_email' && !p.email) ||
+        (contactFilter === 'has_linkedin' && Boolean(p.linkedinUrl)) ||
+        (contactFilter === 'missing_linkedin' && !p.linkedinUrl)
+      return matchesSearch && matchesCompany && matchesLifecycle && matchesContact
     })
-  }, [search, people, companyById])
+  }, [search, people, companyById, companyFilter, lifecycleFilter, contactFilter])
+
+  function clearFilters() {
+    setCompanyFilter('all')
+    setLifecycleFilter('all')
+    setContactFilter('all')
+  }
+
+  const empty = search || hasActiveFilters
+    ? {
+        icon: Filter,
+        title: 'No matching people',
+        description: 'Try changing the search or filters.'
+      }
+    : {
+        icon: Users,
+        title: 'No people yet',
+        description:
+          'Start a research crawl with an ICP description and prospects will land here.',
+        primaryAction: {
+          label: 'New crawl',
+          variant: 'primary' as const
+        }
+      }
+
+  const filterSummary =
+    activeFilterCount > 0 ? 'Clear filters (' + activeFilterCount + ')' : 'Clear filters'
 
   const columns: DataTableColumn<Person>[] = [
     {
@@ -159,10 +277,55 @@ export function PeoplePage({
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
+        <div className="flex items-center gap-2">
+          <Filter className="size-4 text-ink-faint" />
+          <select
+            aria-label="Filter people by company"
+            value={companyFilter}
+            onChange={(e) => setCompanyFilter(e.target.value)}
+            className={filterSelectClass + ' max-w-[190px]'}
+          >
+            <option value="all">All companies</option>
+            <option value="assigned">Has company</option>
+            <option value="unassigned">No company</option>
+            {companyOptions.map((company) => (
+              <option key={company.id} value={company.id}>
+                {company.name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter people by lifecycle status"
+            value={lifecycleFilter}
+            onChange={(e) => setLifecycleFilter(e.target.value)}
+            className={filterSelectClass}
+          >
+            <option value="all">All statuses</option>
+            {lifecycleOptions.map((status) => (
+              <option key={status} value={status}>
+                {status.replace(/_/g, ' ')}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter people by contact info"
+            value={contactFilter}
+            onChange={(e) => setContactFilter(e.target.value)}
+            className={filterSelectClass}
+          >
+            <option value="all">Any contact</option>
+            <option value="has_email">Has email</option>
+            <option value="missing_email">No email</option>
+            <option value="has_linkedin">Has LinkedIn</option>
+            <option value="missing_linkedin">No LinkedIn</option>
+          </select>
+          {hasActiveFilters ? (
+            <Button variant="ghost" size="sm" iconLeft={X} onClick={clearFilters}>
+              {filterSummary}
+            </Button>
+          ) : null}
+        </div>
         <ToolbarSpacer />
-        <Button variant="outline" size="md" iconLeft={Filter}>
-          Filter
-        </Button>
         <Button
           variant="outline"
           size="icon"
@@ -178,21 +341,12 @@ export function PeoplePage({
         rows={filtered}
         rowKey={(p) => p.id}
         loading={loading}
-        hasMore={hasMore && !search}
+        hasMore={hasMore && !search && !hasActiveFilters}
         onLoadMore={onLoadMore}
         onRowClick={onSelectPerson}
         selectedRowKey={selectedKey}
         minWidth="980px"
-        empty={{
-          icon: Users,
-          title: 'No people yet',
-          description:
-            'Start a research crawl with an ICP description and prospects will land here.',
-          primaryAction: {
-            label: 'New crawl',
-            variant: 'primary'
-          }
-        }}
+        empty={empty}
       />
     </section>
   )

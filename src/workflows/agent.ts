@@ -2,6 +2,7 @@ import { estimateChatCostUsd } from '../lib/pricing.js'
 import { openRouterReasoningConfig } from '../lib/openrouter.js'
 import { attributeUsageToPerson, recordUsageEvent } from '../lib/usage.js'
 import {
+  appendCompanyNotes,
   exaFetchUrl,
   exaSearch,
   getCampaignDiscoveredPersonIds,
@@ -118,7 +119,7 @@ const TOOLS = [
     function: {
       name: 'search_existing_companies',
       description:
-        'Search companies in the database. Returns id, name, domain, website, industry. Use before proposing a person so you can link them to an existing company instead of creating a duplicate.',
+        'Search companies in the database. Returns id, name, domain, website, industry, notes. Use before proposing a person so you can link them to an existing company instead of creating a duplicate.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -201,6 +202,11 @@ const TOOLS = [
             type: 'string',
             description: 'One paragraph summarizing why this person fits the ICP. Required.'
           },
+          company_notes: {
+            type: ['string', 'null'],
+            description:
+              'Concise company-level notes from your research: what the company does, why it fits the ICP, notable signals, source-backed details. Do not duplicate person-specific notes.'
+          },
           icp_keywords: {
             type: 'array',
             items: { type: 'string' },
@@ -224,9 +230,14 @@ const TOOLS = [
                   domain: { type: ['string', 'null'] },
                   website: { type: ['string', 'null'] },
                   industry: { type: ['string', 'null'] },
-                  hq_location: { type: ['string', 'null'] }
+                  hq_location: { type: ['string', 'null'] },
+                  notes: {
+                    type: ['string', 'null'],
+                    description:
+                      'Concise company-level notes from your research. Prefer the same value as company_notes unless the draft needs extra company context.'
+                  }
                 },
-                required: ['name', 'domain', 'website', 'industry', 'hq_location']
+                required: ['name', 'domain', 'website', 'industry', 'hq_location', 'notes']
               },
               { type: 'null' }
             ],
@@ -244,6 +255,7 @@ const TOOLS = [
           'twitter_url',
           'notes',
           'context',
+          'company_notes',
           'icp_keywords',
           'source_url',
           'company_id',
@@ -284,6 +296,7 @@ function buildSystemPrompt(input: AgentInput): string {
     '- Do not invent emails, phones, or LinkedIn URLs. Leave them null if unverified.',
     '- A person is "net-new" if they are not already in the campaign (use `search_existing_people` with `campaign_only=true`) and not already in the global DB.',
     '- Before calling `record_person`, search the company DB with `search_existing_companies` to find an existing company to link to. Only create a new company (company_draft) if no plausible match exists. Prefer matching by domain or normalized name.',
+    '- Fill `company_notes` with source-backed company context from your crawl. Keep it about the company, not the person: business model, ICP fit, notable growth/hiring/news signals, or why this account matters.',
     '- Many other agents are working in parallel on this same campaign. Diversify your angle (different sub-industry, geography, role) to reduce overlap.',
     '',
     'Workflow guidance:',
@@ -408,7 +421,8 @@ async function dispatchTool(
               name: r.name,
               domain: r.domain,
               website: r.website,
-              industry: r.industry
+              industry: r.industry,
+              notes: r.notes
             }))
           })
         }
@@ -429,7 +443,8 @@ async function dispatchTool(
             website: company.website,
             industry: company.industry,
             hq_location: company.hqLocation,
-            employee_range: company.employeeRange
+            employee_range: company.employeeRange,
+            notes: company.notes
           })
         }
       }
@@ -509,7 +524,11 @@ async function dispatchTool(
             domain: (companyDraftRaw.domain as string | null | undefined) ?? null,
             website: (companyDraftRaw.website as string | null | undefined) ?? null,
             industry: (companyDraftRaw.industry as string | null | undefined) ?? null,
-            hqLocation: (companyDraftRaw.hq_location as string | null | undefined) ?? null
+            hqLocation: (companyDraftRaw.hq_location as string | null | undefined) ?? null,
+            notes:
+              (companyDraftRaw.notes as string | null | undefined) ??
+              (args.company_notes as string | null | undefined) ??
+              null
           })
           if (!companyId) {
             return {
@@ -528,6 +547,7 @@ async function dispatchTool(
               content: JSON.stringify({ error: 'company_id not found; try search_existing_companies' })
             }
           }
+          await appendCompanyNotes(companyId, args.company_notes as string | null | undefined)
         }
 
         const keywords = Array.isArray(args.icp_keywords)

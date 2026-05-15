@@ -1,10 +1,12 @@
-import { desc, eq, sql } from 'drizzle-orm'
+import { desc, eq, inArray, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { db } from '../db/client.js'
-import { companies, mailboxes } from '../db/schema.js'
+import { companies, mailboxes, people } from '../db/schema.js'
+import { openRouterReasoningConfig } from '../lib/openrouter.js'
 import { startSweepDueAccounts, startWorkAccount } from '../lib/workflowTrigger.js'
+import { requiredEnv } from '../workflows/repo.js'
 import {
   listRecentDrafts,
   listRecentOutreachEvents,
@@ -12,13 +14,18 @@ import {
   startWorkingCompanies
 } from '../workflows/repoOutreach.js'
 
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
+const AGENTIC_COMPANY_SEARCH_MODEL = 'openai/gpt-5-nano'
+const AGENTIC_COMPANY_SEARCH_CONCURRENCY = 12
+
 const createCompany = z.object({
   name: z.string().min(1),
   website: z.string().url(),
   domain: z.string().optional(),
   industry: z.string().optional(),
   employeeRange: z.string().optional(),
-  hqLocation: z.string().optional()
+  hqLocation: z.string().optional(),
+  notes: z.string().optional()
 })
 
 function deriveDomain(value: string | null | undefined): string | null {
@@ -88,7 +95,8 @@ companiesRoutes.post('/', async (c) => {
       website: body.website,
       industry: body.industry,
       employeeRange: body.employeeRange,
-      hqLocation: body.hqLocation
+      hqLocation: body.hqLocation,
+      notes: body.notes
     })
     .returning()
   return c.json(row, 201)
@@ -111,6 +119,209 @@ const patchOutreachSchema = z.object({
 const bulkStartSchema = z.object({
   companyIds: z.array(z.string().uuid()).min(1).max(200),
   mailboxId: z.string().uuid()
+})
+
+const agenticSearchSchema = z.object({
+  criteria: z.string().trim().min(1).max(4000),
+  companyIds: z.array(z.string().uuid()).min(1).max(200)
+})
+
+const agenticSearchDecisionSchema = z.object({
+  fits: z.boolean(),
+  confidence: z.number().min(0).max(1).optional().default(0),
+  rationale: z.string().max(1000).optional().default('')
+})
+
+type AgenticCompanyDecision = z.infer<typeof agenticSearchDecisionSchema>
+
+type OpenRouterResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null
+      refusal?: string
+    }
+  }>
+  error?: { message?: string }
+}
+
+function extractJsonObject(text: string): unknown {
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error('model did not return a JSON object')
+  }
+  return JSON.parse(text.slice(start, end + 1)) as unknown
+}
+
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<U>
+): Promise<U[]> {
+  const results: U[] = new Array(items.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await fn(items[currentIndex])
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }).map(() => worker())
+  )
+  return results
+}
+
+function companyClassifierPrompt(input: {
+  criteria: string
+  company: typeof companies.$inferSelect
+  people: Array<typeof people.$inferSelect>
+}): Array<{ role: 'system' | 'user'; content: string }> {
+  return [
+    {
+      role: 'system',
+      content: [
+        'You are a strict B2B account fit classifier.',
+        'Decide whether the company fits the user criteria using only the provided company and people details.',
+        'Be conservative: select fits only when the details provide positive evidence.',
+        'Return only a JSON object with this exact shape:',
+        '{"fits": boolean, "confidence": number, "rationale": string}'
+      ].join('\n')
+    },
+    {
+      role: 'user',
+      content: JSON.stringify(
+        {
+          criteria: input.criteria,
+          company: input.company,
+          people: input.people
+        },
+        null,
+        2
+      )
+    }
+  ]
+}
+
+async function classifyCompanyFit(input: {
+  apiKey: string
+  criteria: string
+  company: typeof companies.$inferSelect
+  people: Array<typeof people.$inferSelect>
+}): Promise<AgenticCompanyDecision> {
+  const model = process.env.OPENROUTER_AGENTIC_COMPANY_SEARCH_MODEL ?? AGENTIC_COMPANY_SEARCH_MODEL
+  const res = await fetch(OPENROUTER_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + input.apiKey,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://api.flash.orinlabs.ai',
+      'X-Title': 'Flash Company Search'
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      messages: companyClassifierPrompt(input),
+      reasoning: openRouterReasoningConfig()
+    })
+  })
+
+  if (!res.ok) {
+    throw new Error('OpenRouter call failed (' + res.status + '): ' + (await res.text()))
+  }
+
+  const payload = (await res.json()) as OpenRouterResponse
+  if (payload.error?.message) {
+    throw new Error('OpenRouter error: ' + payload.error.message)
+  }
+
+  const message = payload.choices?.[0]?.message
+  if (message?.refusal) {
+    throw new Error('Model refused: ' + message.refusal)
+  }
+
+  const text = message?.content
+  if (!text) {
+    throw new Error('model returned no content')
+  }
+
+  return agenticSearchDecisionSchema.parse(extractJsonObject(text))
+}
+
+companiesRoutes.post('/agentic-search', async (c) => {
+  const parsed = agenticSearchSchema.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const apiKey = requiredEnv('OPENROUTER_API_KEY')
+  const { criteria, companyIds } = parsed.data
+
+  const companyRows = await db
+    .select()
+    .from(companies)
+    .where(inArray(companies.id, companyIds))
+
+  const companyById = new Map(companyRows.map((company) => [company.id, company]))
+  const orderedCompanies = companyIds
+    .map((id) => companyById.get(id))
+    .filter((company): company is typeof companies.$inferSelect => Boolean(company))
+
+  const peopleRows =
+    orderedCompanies.length > 0
+      ? await db
+          .select()
+          .from(people)
+          .where(inArray(people.companyId, orderedCompanies.map((company) => company.id)))
+      : []
+
+  const peopleByCompany = new Map<string, Array<typeof people.$inferSelect>>()
+  for (const person of peopleRows) {
+    if (!person.companyId) continue
+    const current = peopleByCompany.get(person.companyId) ?? []
+    current.push(person)
+    peopleByCompany.set(person.companyId, current)
+  }
+
+  const results = await mapWithConcurrency(
+    orderedCompanies,
+    AGENTIC_COMPANY_SEARCH_CONCURRENCY,
+    async (company) => {
+      try {
+        const decision = await classifyCompanyFit({
+          apiKey,
+          criteria,
+          company,
+          people: peopleByCompany.get(company.id) ?? []
+        })
+        return {
+          companyId: company.id,
+          fits: decision.fits,
+          confidence: decision.confidence,
+          rationale: decision.rationale
+        }
+      } catch (err) {
+        return {
+          companyId: company.id,
+          fits: false,
+          confidence: 0,
+          rationale: '',
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
+
+  return c.json({
+    selectedCompanyIds: results.filter((result) => result.fits).map((result) => result.companyId),
+    results,
+    errors: results
+      .filter((result) => result.error)
+      .map((result) => ({ companyId: result.companyId, error: result.error }))
+  })
 })
 
 companiesRoutes.patch('/:id/outreach', async (c) => {

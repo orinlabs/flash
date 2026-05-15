@@ -1,4 +1,14 @@
-import { Building2, ChevronRight, Filter, Pause, Play, RefreshCw, Search } from 'lucide-react'
+import {
+  Building2,
+  ChevronRight,
+  Filter,
+  Pause,
+  Play,
+  RefreshCw,
+  Search,
+  Sparkles,
+  X
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { apiPatch, apiPost, type Company, type Mailbox, type Person } from '@/api'
@@ -9,6 +19,32 @@ import { StatusDot } from '@/components/ui/status-dot'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
 import { faviconUrl, formatRelative } from '@/lib/format'
 import { cn } from '@/lib/utils'
+
+const filterSelectClass =
+  'h-8 rounded-md border border-line bg-surface px-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/25'
+
+function collectSearchValues(value: unknown, depth = 0): string[] {
+  if (value === null || value === undefined || depth > 3) return []
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return [String(value)]
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectSearchValues(item, depth + 1))
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, item]) => [
+      key,
+      ...collectSearchValues(item, depth + 1)
+    ])
+  }
+  return []
+}
+
+function includesSearch(values: unknown[], q: string): boolean {
+  return values
+    .flatMap((value) => collectSearchValues(value))
+    .some((value) => value.toLowerCase().includes(q))
+}
 
 interface Props {
   companies: Company[]
@@ -22,6 +58,18 @@ interface Props {
   onSelectCompany: (company: Company) => void
   selectedKey: string | null
   onError: (msg: string) => void
+}
+
+type AgenticCompanySearchResponse = {
+  selectedCompanyIds: string[]
+  results: Array<{
+    companyId: string
+    fits: boolean
+    confidence: number
+    rationale: string
+    error?: string
+  }>
+  errors: Array<{ companyId: string; error: string }>
 }
 
 export function CompaniesPage({
@@ -42,6 +90,17 @@ export function CompaniesPage({
   const [bulkMailboxId, setBulkMailboxId] = useState<string | null>(null)
   const [bulkStarting, setBulkStarting] = useState(false)
   const [bulkPausing, setBulkPausing] = useState(false)
+  const [outreachFilter, setOutreachFilter] = useState<'all' | Company['outreachStatus']>(
+    'all'
+  )
+  const [mailboxFilter, setMailboxFilter] = useState('all')
+  const [peopleFilter, setPeopleFilter] = useState('all')
+  const [draftFilter, setDraftFilter] = useState('all')
+  const [agenticCriteria, setAgenticCriteria] = useState('')
+  const [agenticSearching, setAgenticSearching] = useState(false)
+  const [agenticSummary, setAgenticSummary] = useState<string | null>(null)
+
+  const mailboxById = useMemo(() => new Map(mailboxes.map((m) => [m.id, m])), [mailboxes])
 
   const peopleByCompany = useMemo(() => {
     const map = new Map<string, number>()
@@ -52,21 +111,119 @@ export function CompaniesPage({
     return map
   }, [people])
 
+  const peopleDetailsByCompany = useMemo(() => {
+    const map = new Map<string, Person[]>()
+    for (const person of people) {
+      if (!person.companyId) continue
+      const current = map.get(person.companyId) ?? []
+      current.push(person)
+      map.set(person.companyId, current)
+    }
+    return map
+  }, [people])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return companies
-    return companies.filter((c) =>
-      [c.name, c.domain, c.industry, c.hqLocation]
-        .filter(Boolean)
-        .some((v) => (v as string).toLowerCase().includes(q))
-    )
-  }, [search, companies])
+    return companies.filter((c) => {
+      const relatedPeople = peopleDetailsByCompany.get(c.id) ?? []
+      const mailbox = c.outreachMailboxId ? mailboxById.get(c.outreachMailboxId) : null
+      const matchesSearch =
+        !q ||
+        includesSearch(
+          [
+            c.name,
+            c.domain,
+            c.website,
+            c.industry,
+            c.employeeRange,
+            c.hqLocation,
+            c.outreachStatus,
+            c.outreachStrategy,
+            c.outreachEmailInstructions,
+            c.enrichmentPayload,
+            mailbox?.email,
+            mailbox?.displayName,
+            mailbox?.senderBio,
+            mailbox?.outreachEmailInstructions,
+            relatedPeople.map((person) => [
+              person.fullName,
+              person.email,
+              person.phone,
+              person.linkedinUrl,
+              person.twitterUrl,
+              person.title,
+              person.seniority,
+              person.department,
+              person.lifecycleStatus,
+              person.notes,
+              person.context,
+              person.icpKeywords,
+              person.enrichmentSources
+            ])
+          ],
+          q
+        )
+      const matchesOutreach =
+        outreachFilter === 'all' || c.outreachStatus === outreachFilter
+      const matchesMailbox =
+        mailboxFilter === 'all' ||
+        (mailboxFilter === 'assigned' && Boolean(c.outreachMailboxId)) ||
+        (mailboxFilter === 'unassigned' && !c.outreachMailboxId) ||
+        c.outreachMailboxId === mailboxFilter
+      const peopleCount = peopleByCompany.get(c.id) ?? 0
+      const matchesPeople =
+        peopleFilter === 'all' ||
+        (peopleFilter === 'with_people' && peopleCount > 0) ||
+        (peopleFilter === 'without_people' && peopleCount === 0)
+      const pendingDrafts = pendingDraftsByCompany.get(c.id) ?? 0
+      const matchesDrafts =
+        draftFilter === 'all' ||
+        (draftFilter === 'pending' && pendingDrafts > 0) ||
+        (draftFilter === 'none' && pendingDrafts === 0)
+      return (
+        matchesSearch &&
+        matchesOutreach &&
+        matchesMailbox &&
+        matchesPeople &&
+        matchesDrafts
+      )
+    })
+  }, [
+    search,
+    companies,
+    peopleByCompany,
+    peopleDetailsByCompany,
+    mailboxById,
+    pendingDraftsByCompany,
+    outreachFilter,
+    mailboxFilter,
+    peopleFilter,
+    draftFilter
+  ])
 
-  const mailboxById = useMemo(() => new Map(mailboxes.map((m) => [m.id, m])), [mailboxes])
   const activeMailboxes = useMemo(
     () => mailboxes.filter((m) => m.status === 'active'),
     [mailboxes]
   )
+  const outreachStatuses = useMemo(() => {
+    return Array.from(new Set(companies.map((c) => c.outreachStatus))).sort()
+  }, [companies])
+
+  const activeFilterCount =
+    (outreachFilter !== 'all' ? 1 : 0) +
+    (mailboxFilter !== 'all' ? 1 : 0) +
+    (peopleFilter !== 'all' ? 1 : 0) +
+    (draftFilter !== 'all' ? 1 : 0)
+  const hasActiveFilters = activeFilterCount > 0
+  const filterSummary =
+    activeFilterCount > 0 ? 'Clear filters (' + activeFilterCount + ')' : 'Clear filters'
+
+  function clearFilters() {
+    setOutreachFilter('all')
+    setMailboxFilter('all')
+    setPeopleFilter('all')
+    setDraftFilter('all')
+  }
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -124,6 +281,44 @@ export function CompaniesPage({
       onError(err instanceof Error ? err.message : 'Bulk update failed')
     } finally {
       setBulkPausing(false)
+    }
+  }
+
+  async function runAgenticSearch(event?: React.FormEvent) {
+    event?.preventDefault()
+    const criteria = agenticCriteria.trim()
+    if (!criteria) {
+      onError('Enter criteria for the agentic search.')
+      return
+    }
+    const targetIds = filtered.map((company) => company.id)
+    if (targetIds.length === 0) {
+      onError('No visible companies to search.')
+      return
+    }
+    if (targetIds.length > 200) {
+      onError('Agentic search can judge up to 200 visible companies. Add filters first.')
+      return
+    }
+
+    setAgenticSearching(true)
+    setAgenticSummary(null)
+    try {
+      const res = await apiPost<AgenticCompanySearchResponse>('/companies/agentic-search', {
+        criteria,
+        companyIds: targetIds
+      })
+      setSelected(new Set(res.selectedCompanyIds))
+      setAgenticSummary(
+        'Selected ' + res.selectedCompanyIds.length + ' of ' + targetIds.length + ' companies'
+      )
+      if (res.errors.length > 0) {
+        onError('Agentic search had errors for ' + res.errors.length + ' companies.')
+      }
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Agentic search failed')
+    } finally {
+      setAgenticSearching(false)
     }
   }
 
@@ -279,10 +474,65 @@ export function CompaniesPage({
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
+        <div className="flex items-center gap-2">
+          <Filter className="size-4 text-ink-faint" />
+          <select
+            aria-label="Filter companies by outreach status"
+            value={outreachFilter}
+            onChange={(e) =>
+              setOutreachFilter(e.target.value as 'all' | Company['outreachStatus'])
+            }
+            className={filterSelectClass}
+          >
+            <option value="all">All statuses</option>
+            {outreachStatuses.map((status) => (
+              <option key={status} value={status}>
+                {status.replace(/_/g, ' ')}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter companies by mailbox"
+            value={mailboxFilter}
+            onChange={(e) => setMailboxFilter(e.target.value)}
+            className={filterSelectClass + ' max-w-[190px]'}
+          >
+            <option value="all">All mailboxes</option>
+            <option value="assigned">Has mailbox</option>
+            <option value="unassigned">No mailbox</option>
+            {activeMailboxes.map((mailbox) => (
+              <option key={mailbox.id} value={mailbox.id}>
+                {mailbox.email}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter companies by people count"
+            value={peopleFilter}
+            onChange={(e) => setPeopleFilter(e.target.value)}
+            className={filterSelectClass}
+          >
+            <option value="all">Any people</option>
+            <option value="with_people">Has people</option>
+            <option value="without_people">No people</option>
+          </select>
+          <select
+            aria-label="Filter companies by pending drafts"
+            value={draftFilter}
+            onChange={(e) => setDraftFilter(e.target.value)}
+            className={filterSelectClass}
+          >
+            <option value="all">Any drafts</option>
+            <option value="pending">Pending drafts</option>
+            <option value="none">No pending drafts</option>
+          </select>
+          {hasActiveFilters ? (
+            <Button variant="ghost" size="sm" iconLeft={X} onClick={clearFilters}>
+              {filterSummary}
+            </Button>
+          ) : null}
+        </div>
         <ToolbarSpacer />
-        <Button variant="outline" size="md" iconLeft={Filter}>
-          Filter
-        </Button>
         <Button
           variant="outline"
           size="icon"
@@ -293,6 +543,33 @@ export function CompaniesPage({
           {!(loading && companies.length > 0) ? <RefreshCw /> : null}
         </Button>
       </Toolbar>
+      <form
+        onSubmit={(event) => void runAgenticSearch(event)}
+        className="flex shrink-0 items-center gap-2 border-b border-line bg-surface px-4 py-2"
+      >
+        <Input
+          iconLeft={Sparkles}
+          placeholder="Agentic search criteria..."
+          value={agenticCriteria}
+          onChange={(event) => setAgenticCriteria(event.target.value)}
+          className="max-w-xl"
+        />
+        <Button
+          type="submit"
+          variant="accent"
+          size="md"
+          loading={agenticSearching}
+          disabled={filtered.length === 0}
+        >
+          Agentic search
+        </Button>
+        <span className="text-xs text-ink-faint">
+          Judges {filtered.length} visible {filtered.length === 1 ? 'company' : 'companies'}
+        </span>
+        {agenticSummary ? (
+          <span className="text-xs font-medium text-ink-muted">{agenticSummary}</span>
+        ) : null}
+      </form>
       {selected.size > 0 ? (
         <div className="flex items-center gap-3 border-b border-line bg-accent-soft px-5 py-2">
           <span className="text-sm font-medium text-ink">
@@ -348,17 +625,25 @@ export function CompaniesPage({
         rows={filtered}
         rowKey={(c) => c.id}
         loading={loading}
-        hasMore={hasMore && !search}
+        hasMore={hasMore && !search && !hasActiveFilters}
         onLoadMore={onLoadMore}
         onRowClick={onSelectCompany}
         selectedRowKey={selectedKey}
         minWidth="1100px"
-        empty={{
-          icon: Building2,
-          title: 'No companies yet',
-          description:
-            'Companies appear automatically as the crawler discovers prospects matching your ICP.'
-        }}
+        empty={
+          search || hasActiveFilters
+            ? {
+                icon: Filter,
+                title: 'No matching companies',
+                description: 'Try changing the search or filters.'
+              }
+            : {
+                icon: Building2,
+                title: 'No companies yet',
+                description:
+                  'Companies appear automatically as the crawler discovers prospects matching your ICP.'
+              }
+        }
       />
     </section>
   )

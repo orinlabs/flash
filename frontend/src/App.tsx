@@ -138,6 +138,23 @@ function parseDetailFromSearch(search: URLSearchParams): DetailSelection | null 
   return null
 }
 
+function collectSearchValues(value: unknown, depth = 0): string[] {
+  if (value === null || value === undefined || depth > 3) return []
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return [String(value)]
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectSearchValues(item, depth + 1))
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, item]) => [
+      key,
+      ...collectSearchValues(item, depth + 1)
+    ])
+  }
+  return []
+}
+
 function NavigateToLogin() {
   const loc = useLocation()
   const target = loc.pathname + (loc.search || '')
@@ -387,6 +404,16 @@ function FlashApp({
     () => new Map(people.map((person) => [person.id, person])),
     [people]
   )
+  const peopleByCompanyForSearch = useMemo(() => {
+    const map = new Map<string, Person[]>()
+    for (const person of people) {
+      if (!person.companyId) continue
+      const current = map.get(person.companyId) ?? []
+      current.push(person)
+      map.set(person.companyId, current)
+    }
+    return map
+  }, [people])
   const crawlById = useMemo(
     () => new Map(crawls.map((c) => [c.id, c])),
     [crawls]
@@ -512,22 +539,78 @@ function FlashApp({
         description: description || undefined,
         group: 'People',
         icon: Users,
-        keywords: [p.email, p.title, company?.name, company?.domain]
-          .filter(Boolean)
-          .join(' '),
+        keywords: collectSearchValues([
+          p.email,
+          p.phone,
+          p.linkedinUrl,
+          p.twitterUrl,
+          p.title,
+          p.seniority,
+          p.department,
+          p.lifecycleStatus,
+          p.notes,
+          p.context,
+          p.icpKeywords,
+          p.enrichmentSources,
+          company?.name,
+          company?.domain,
+          company?.website,
+          company?.industry,
+          company?.employeeRange,
+          company?.hqLocation,
+          company?.outreachStatus,
+          company?.outreachStrategy,
+          company?.outreachEmailInstructions,
+          company?.enrichmentPayload
+        ]).join(' '),
         onSelect: () => openDetail({ type: 'person', id: p.id })
       }
     })
 
-    const companyItems: CommandItem[] = companies.map((c) => ({
-      id: 'company:' + c.id,
-      label: c.name,
-      description: c.domain ?? c.website ?? undefined,
-      group: 'Companies',
-      icon: Building2,
-      keywords: [c.domain, c.website, c.industry, c.hqLocation].filter(Boolean).join(' '),
-      onSelect: () => openDetail({ type: 'company', id: c.id })
-    }))
+    const companyItems: CommandItem[] = companies.map((c) => {
+      const relatedPeople = peopleByCompanyForSearch.get(c.id) ?? []
+      const mailbox = c.outreachMailboxId
+        ? mailboxes.find((m) => m.id === c.outreachMailboxId)
+        : null
+      return {
+        id: 'company:' + c.id,
+        label: c.name,
+        description: c.domain ?? c.website ?? undefined,
+        group: 'Companies',
+        icon: Building2,
+        keywords: collectSearchValues([
+          c.domain,
+          c.website,
+          c.industry,
+          c.employeeRange,
+          c.hqLocation,
+          c.outreachStatus,
+          c.outreachStrategy,
+          c.outreachEmailInstructions,
+          c.enrichmentPayload,
+          mailbox?.email,
+          mailbox?.displayName,
+          mailbox?.senderBio,
+          mailbox?.outreachEmailInstructions,
+          relatedPeople.map((person) => [
+            person.fullName,
+            person.email,
+            person.phone,
+            person.linkedinUrl,
+            person.twitterUrl,
+            person.title,
+            person.seniority,
+            person.department,
+            person.lifecycleStatus,
+            person.notes,
+            person.context,
+            person.icpKeywords,
+            person.enrichmentSources
+          ])
+        ]).join(' '),
+        onSelect: () => openDetail({ type: 'company', id: c.id })
+      }
+    })
 
     const crawlItems: CommandItem[] = crawls.map((c) => ({
       id: 'crawl:' + c.id,
@@ -540,7 +623,7 @@ function FlashApp({
     }))
 
     return [...navItems, ...crawlItems, ...companyItems, ...peopleItems]
-  }, [people, companies, crawls, companyById, goToTab, openDetail])
+  }, [people, companies, crawls, companyById, peopleByCompanyForSearch, mailboxes, goToTab, openDetail])
 
   function loadMorePeople() {
     if (!peopleLoading && peopleHasMore) void loadPeople(people.length)
