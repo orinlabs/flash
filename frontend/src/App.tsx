@@ -5,9 +5,10 @@ import {
   Play,
   RefreshCw,
   Search,
-  Users
+  Users,
+  X
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   apiGet,
@@ -38,6 +39,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 
 type TabId = 'people' | 'companies' | 'crawls' | 'campaigns'
+type DetailSelection = { type: 'person'; id: string } | { type: 'company'; id: string }
 
 const navItems: Array<{ id: TabId; label: string; description: string; icon: typeof Users }> = [
   {
@@ -71,6 +73,7 @@ export default function App() {
   const [crawls, setCrawls] = useState<Campaign[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
   const [people, setPeople] = useState<Person[]>([])
+  const [detail, setDetail] = useState<DetailSelection | null>(null)
   const [crawlsLoading, setCrawlsLoading] = useState(true)
   const [companiesLoading, setCompaniesLoading] = useState(true)
   const [peopleLoading, setPeopleLoading] = useState(false)
@@ -94,7 +97,7 @@ export default function App() {
     setPeopleLoading(true)
     setError(null)
     try {
-      const res = await apiGet<{ data: Person[] }>('/people?limit=25')
+      const res = await apiGet<{ data: Person[] }>('/people?limit=200')
       setPeople(res.data)
     } finally {
       setPeopleLoading(false)
@@ -168,6 +171,15 @@ export default function App() {
   }
 
   const activeNav = navItems.find((item) => item.id === activeTab) ?? navItems[0]
+  const companyById = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies])
+  const personById = useMemo(() => new Map(people.map((person) => [person.id, person])), [people])
+  const selectedPerson = detail?.type === 'person' ? personById.get(detail.id) ?? null : null
+  const selectedCompany = detail?.type === 'company' ? companyById.get(detail.id) ?? null : null
+  const selectedCompanyPeople = selectedCompany
+    ? people.filter((person) => person.companyId === selectedCompany.id)
+    : selectedPerson?.companyId
+      ? people.filter((person) => person.companyId === selectedPerson.companyId)
+      : []
 
   return (
     <div className="min-h-svh bg-muted/20 text-left">
@@ -232,16 +244,21 @@ export default function App() {
           {activeTab === 'people' ? (
             <PeoplePage
               people={people}
+              companyById={companyById}
               loading={peopleLoading}
               onRefresh={() => void loadPeople()}
+              onSelectPerson={(person) => setDetail({ type: 'person', id: person.id })}
+              onSelectCompany={(companyId) => setDetail({ type: 'company', id: companyId })}
             />
           ) : null}
 
           {activeTab === 'companies' ? (
             <CompaniesPage
               companies={companies}
+              people={people}
               loading={companiesLoading}
               onRefresh={() => void loadCompanies()}
+              onSelectCompany={(company) => setDetail({ type: 'company', id: company.id })}
             />
           ) : null}
 
@@ -266,18 +283,32 @@ export default function App() {
           {activeTab === 'campaigns' ? <CampaignsPage /> : null}
         </main>
       </div>
+      <DetailDrawer
+        person={selectedPerson}
+        company={selectedCompany ?? (selectedPerson?.companyId ? companyById.get(selectedPerson.companyId) ?? null : null)}
+        companyPeople={selectedCompanyPeople}
+        onClose={() => setDetail(null)}
+        onSelectPerson={(person) => setDetail({ type: 'person', id: person.id })}
+        onSelectCompany={(companyId) => setDetail({ type: 'company', id: companyId })}
+      />
     </div>
   )
 }
 
 function PeoplePage({
   people,
+  companyById,
   loading,
-  onRefresh
+  onRefresh,
+  onSelectPerson,
+  onSelectCompany
 }: {
   people: Person[]
+  companyById: Map<string, Company>
   loading: boolean
   onRefresh: () => void
+  onSelectPerson: (person: Person) => void
+  onSelectCompany: (companyId: string) => void
 }) {
   return (
     <Card>
@@ -295,6 +326,7 @@ function PeoplePage({
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
+              <TableHead>Company</TableHead>
               <TableHead>Title</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>LinkedIn</TableHead>
@@ -304,14 +336,34 @@ function PeoplePage({
           <TableBody>
             {people.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground text-center text-sm">
+                <TableCell colSpan={6} className="text-muted-foreground text-center text-sm">
                   No people yet. Start a crawl to populate this table.
                 </TableCell>
               </TableRow>
             ) : (
               people.map((person) => (
-                <TableRow key={person.id}>
+                <TableRow
+                  key={person.id}
+                  className="cursor-pointer"
+                  onClick={() => onSelectPerson(person)}
+                >
                   <TableCell className="font-medium">{person.fullName ?? '-'}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm">
+                    {person.companyId && companyById.get(person.companyId) ? (
+                      <button
+                        type="button"
+                        className="text-left underline"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onSelectCompany(person.companyId as string)
+                        }}
+                      >
+                        {companyById.get(person.companyId)?.name}
+                      </button>
+                    ) : (
+                      '-'
+                    )}
+                  </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {person.title ?? '-'}
                   </TableCell>
@@ -342,12 +394,16 @@ function PeoplePage({
 
 function CompaniesPage({
   companies,
+  people,
   loading,
-  onRefresh
+  onRefresh,
+  onSelectCompany
 }: {
   companies: Company[]
+  people: Person[]
   loading: boolean
   onRefresh: () => void
+  onSelectCompany: (company: Company) => void
 }) {
   return (
     <Card>
@@ -368,18 +424,23 @@ function CompaniesPage({
               <TableHead>Domain</TableHead>
               <TableHead>Industry</TableHead>
               <TableHead>HQ</TableHead>
+              <TableHead>People</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {companies.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-muted-foreground text-center text-sm">
+                <TableCell colSpan={5} className="text-muted-foreground text-center text-sm">
                   No companies yet.
                 </TableCell>
               </TableRow>
             ) : (
               companies.map((company) => (
-                <TableRow key={company.id}>
+                <TableRow
+                  key={company.id}
+                  className="cursor-pointer"
+                  onClick={() => onSelectCompany(company)}
+                >
                   <TableCell className="font-medium">{company.name}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {company.website ? (
@@ -395,6 +456,11 @@ function CompaniesPage({
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {company.hqLocation ?? '-'}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">
+                      {people.filter((person) => person.companyId === company.id).length}
+                    </Badge>
                   </TableCell>
                 </TableRow>
               ))
@@ -579,4 +645,235 @@ function CampaignsPage() {
       </CardContent>
     </Card>
   )
+}
+
+function DetailDrawer({
+  person,
+  company,
+  companyPeople,
+  onClose,
+  onSelectPerson,
+  onSelectCompany
+}: {
+  person: Person | null
+  company: Company | null
+  companyPeople: Person[]
+  onClose: () => void
+  onSelectPerson: (person: Person) => void
+  onSelectCompany: (companyId: string) => void
+}) {
+  if (!person && !company) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/20" onClick={onClose}>
+      <aside
+        className="h-full w-full max-w-xl overflow-y-auto border-l bg-background p-6 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-muted-foreground text-xs uppercase tracking-wide">
+              {person ? 'Person' : 'Company'}
+            </p>
+            <h2 className="mt-1 text-2xl font-semibold">
+              {person?.fullName ?? company?.name ?? 'Details'}
+            </h2>
+            {person?.title ? (
+              <p className="text-muted-foreground mt-1 text-sm">{person.title}</p>
+            ) : null}
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose}>
+            <X />
+          </Button>
+        </div>
+
+        {person ? (
+          <PersonDetails
+            person={person}
+            company={company}
+            onSelectCompany={onSelectCompany}
+          />
+        ) : null}
+
+        {company ? (
+          <CompanyDetails
+            company={company}
+            people={companyPeople}
+            onSelectPerson={onSelectPerson}
+          />
+        ) : null}
+      </aside>
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  if (value === null || value === undefined || value === '') return null
+  return (
+    <div className="grid gap-1 border-b py-3 last:border-b-0">
+      <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{label}</dt>
+      <dd className="text-sm">{value}</dd>
+    </div>
+  )
+}
+
+function PersonDetails({
+  person,
+  company,
+  onSelectCompany
+}: {
+  person: Person
+  company: Company | null
+  onSelectCompany: (companyId: string) => void
+}) {
+  return (
+    <section className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Person details</CardTitle>
+          <CardDescription>Full researched profile from the crawl.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <dl>
+            <DetailRow
+              label="Company"
+              value={
+                company && person.companyId ? (
+                  <button
+                    type="button"
+                    className="font-medium underline"
+                    onClick={() => onSelectCompany(person.companyId as string)}
+                  >
+                    {company.name}
+                  </button>
+                ) : (
+                  '-'
+                )
+              }
+            />
+            <DetailRow label="Seniority" value={person.seniority} />
+            <DetailRow label="Department" value={person.department} />
+            <DetailRow label="Email" value={person.email} />
+            <DetailRow label="Phone" value={person.phone} />
+            <DetailRow
+              label="LinkedIn"
+              value={
+                person.linkedinUrl ? (
+                  <a className="underline" href={person.linkedinUrl} target="_blank" rel="noreferrer">
+                    {person.linkedinUrl}
+                  </a>
+                ) : null
+              }
+            />
+            <DetailRow
+              label="Twitter / X"
+              value={
+                person.twitterUrl ? (
+                  <a className="underline" href={person.twitterUrl} target="_blank" rel="noreferrer">
+                    {person.twitterUrl}
+                  </a>
+                ) : null
+              }
+            />
+            <DetailRow label="Lifecycle" value={<Badge variant="secondary">{person.lifecycleStatus}</Badge>} />
+            <DetailRow label="Context" value={person.context} />
+            <DetailRow label="Notes" value={<p className="whitespace-pre-wrap">{person.notes}</p>} />
+            <DetailRow
+              label="ICP keywords"
+              value={
+                person.icpKeywords?.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {person.icpKeywords.map((keyword) => (
+                      <Badge key={keyword} variant="outline">
+                        {keyword}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : null
+              }
+            />
+            <DetailRow label="Last seen" value={formatDate(person.lastSeenAt)} />
+            <DetailRow label="Created" value={formatDate(person.createdAt)} />
+          </dl>
+        </CardContent>
+      </Card>
+    </section>
+  )
+}
+
+function CompanyDetails({
+  company,
+  people,
+  onSelectPerson
+}: {
+  company: Company
+  people: Person[]
+  onSelectPerson: (person: Person) => void
+}) {
+  return (
+    <section className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Company details</CardTitle>
+          <CardDescription>Account metadata from crawls.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <dl>
+            <DetailRow label="Domain" value={company.domain} />
+            <DetailRow
+              label="Website"
+              value={
+                company.website ? (
+                  <a className="underline" href={company.website} target="_blank" rel="noreferrer">
+                    {company.website}
+                  </a>
+                ) : null
+              }
+            />
+            <DetailRow label="Industry" value={company.industry} />
+            <DetailRow label="Employee range" value={company.employeeRange} />
+            <DetailRow label="HQ location" value={company.hqLocation} />
+            <DetailRow label="Created" value={formatDate(company.createdAt)} />
+            <DetailRow label="Updated" value={formatDate(company.updatedAt)} />
+          </dl>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Researched people at this company</CardTitle>
+          <CardDescription>
+            {people.length} {people.length === 1 ? 'person' : 'people'} linked to {company.name}.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {people.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No researched people linked yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {people.map((person) => (
+                <button
+                  key={person.id}
+                  type="button"
+                  className="hover:bg-muted flex w-full items-start justify-between rounded-lg border p-3 text-left"
+                  onClick={() => onSelectPerson(person)}
+                >
+                  <span>
+                    <span className="block font-medium">{person.fullName ?? 'Unnamed person'}</span>
+                    <span className="text-muted-foreground block text-sm">{person.title ?? 'No title'}</span>
+                  </span>
+                  <Badge variant="secondary">{person.lifecycleStatus}</Badge>
+                </button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  )
+}
+
+function formatDate(value: string | null | undefined): string | null {
+  if (!value) return null
+  return new Date(value).toLocaleString()
 }
