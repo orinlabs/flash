@@ -18,6 +18,8 @@ const STATUS_OPTIONS: { value: OutreachDraftStatus | 'all'; label: string }[] = 
   { value: 'all', label: 'All' }
 ]
 
+type LoadResult = { ok: true; selectedId: string | null } | { ok: false }
+
 interface Props {
   mailboxes: Mailbox[]
   onPendingReviewChanged?: () => void
@@ -33,7 +35,7 @@ export function DraftsPage({ mailboxes, onPendingReviewChanged }: Props) {
   const [detail, setDetail] = useState<DraftDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
 
-  async function load() {
+  async function load(): Promise<LoadResult> {
     setLoading(true)
     setError(null)
     try {
@@ -44,13 +46,17 @@ export function DraftsPage({ mailboxes, onPendingReviewChanged }: Props) {
       const qs = params.toString()
       const res = await apiGet<{ data: DraftQueueRow[] }>('/drafts' + (qs ? '?' + qs : ''))
       setRows(res.data)
+      let nextSelectedId = selectedId
       if (res.data.length > 0 && !res.data.some((r) => r.draft.id === selectedId)) {
-        setSelectedId(res.data[0].draft.id)
+        nextSelectedId = res.data[0].draft.id
       } else if (res.data.length === 0) {
-        setSelectedId(null)
+        nextSelectedId = null
       }
+      setSelectedId(nextSelectedId)
+      return { ok: true, selectedId: nextSelectedId }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load drafts')
+      return { ok: false }
     } finally {
       setLoading(false)
     }
@@ -83,12 +89,18 @@ export function DraftsPage({ mailboxes, onPendingReviewChanged }: Props) {
     }
   }, [selectedId])
 
-  function refreshAfterAction() {
-    void load()
+  async function refreshAfterAction() {
+    const currentSelectedId = selectedId
+    const result = await load()
     onPendingReviewChanged?.()
-    if (selectedId) {
+    if (!result.ok) return
+    if (result.selectedId !== currentSelectedId) {
+      setDetail(null)
+      return
+    }
+    if (result.selectedId) {
       setDetailLoading(true)
-      apiGet<DraftDetail>('/drafts/' + selectedId)
+      apiGet<DraftDetail>('/drafts/' + result.selectedId)
         .then(setDetail)
         .catch((err) => setError(err instanceof Error ? err.message : 'Refresh failed'))
         .finally(() => setDetailLoading(false))
