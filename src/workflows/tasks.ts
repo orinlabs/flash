@@ -197,7 +197,7 @@ async function extractCandidates(
         {
           role: 'system',
           content:
-            'Extract real B2B prospect people and companies from search results. Only include people that are explicitly named or strongly evidenced. Contact fields may be null; do not invent emails, phones, or LinkedIn URLs.'
+            'Extract real B2B prospect people and companies from search results. Only include people that are explicitly named or strongly evidenced. Always include the companyWebsite (or at least companyDomain) for the person\'s employer when it is visible in the search results; otherwise leave them null. Contact fields may be null; do not invent emails, phones, or LinkedIn URLs.'
         },
         {
           role: 'user',
@@ -305,7 +305,7 @@ async function extractCandidates(
   )
 }
 
-async function upsertCompany(candidate: ProspectCandidate): Promise<string> {
+async function upsertCompany(candidate: ProspectCandidate): Promise<string | null> {
   const name = cleanNullable(candidate.companyName)
   if (!name) {
     throw new Error('candidate companyName is required')
@@ -335,8 +335,30 @@ async function upsertCompany(candidate: ProspectCandidate): Promise<string> {
     }
   }
 
-  const [byName] = await db.select().from(companies).where(eq(companies.name, name)).limit(1)
-  if (byName) return byName.id
+  const [byName] = await db
+    .select()
+    .from(companies)
+    .where(sql`lower(trim(${companies.name})) = ${name.toLowerCase()}`)
+    .limit(1)
+  if (byName) {
+    if (!byName.website && website) {
+      const [updated] = await db
+        .update(companies)
+        .set({
+          website,
+          domain: byName.domain ?? domain ?? undefined,
+          updatedAt: new Date()
+        })
+        .where(eq(companies.id, byName.id))
+        .returning()
+      return updated.id
+    }
+    return byName.id
+  }
+
+  if (!website) {
+    return null
+  }
 
   try {
     const [created] = await db
@@ -344,7 +366,7 @@ async function upsertCompany(candidate: ProspectCandidate): Promise<string> {
       .values({
         name,
         domain: domain ?? undefined,
-        website: website ?? undefined,
+        website,
         industry: cleanNullable(candidate.industry) ?? undefined,
         hqLocation: cleanNullable(candidate.hqLocation) ?? undefined,
         enrichmentPayload: { source: 'workflow_extraction' }
@@ -356,7 +378,11 @@ async function upsertCompany(candidate: ProspectCandidate): Promise<string> {
     const [existing] = await db
       .select()
       .from(companies)
-      .where(domain ? sql`lower(trim(${companies.domain})) = ${domain}` : eq(companies.name, name))
+      .where(
+        domain
+          ? sql`lower(trim(${companies.domain})) = ${domain}`
+          : sql`lower(trim(${companies.name})) = ${name.toLowerCase()}`
+      )
       .limit(1)
     if (existing) return existing.id
     throw err
@@ -609,6 +635,9 @@ async function runProspectCampaign(campaignRunId: string): Promise<{ qualifiedCo
       if (qualifiedCount >= targetCount) break
 
       const companyId = await upsertCompany(candidate)
+      if (!companyId) {
+        continue
+      }
       const upserted = await upsertPerson(candidate, campaign.id, companyId)
 
       await insertDiscoveryEventOnce(

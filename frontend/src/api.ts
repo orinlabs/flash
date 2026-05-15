@@ -68,6 +68,7 @@ export type Person = {
   enrichmentSources: Record<string, unknown> | null
   lifecycleStatus: string
   firstSeenCampaignId: string | null
+  discoveryCampaignIds: string[]
   lastSeenAt: string | null
   createdAt: string
   updatedAt: string

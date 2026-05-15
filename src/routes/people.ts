@@ -1,9 +1,20 @@
-import { and, desc, eq, isNotNull, isNull, SQL } from 'drizzle-orm'
+import { and, desc, eq, getTableColumns, isNotNull, isNull, sql, SQL } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { db } from '../db/client.js'
-import { people } from '../db/schema.js'
+import { companies, discoveryEvents, people } from '../db/schema.js'
+
+const discoveryCampaignIdsCol = sql<
+  string[]
+>`coalesce((select array_agg(distinct ${discoveryEvents.campaignId}) from ${discoveryEvents} where ${discoveryEvents.personId} = ${people.id}), '{}')`.as(
+  'discovery_campaign_ids'
+)
+
+const peopleColumns = {
+  ...getTableColumns(people),
+  discoveryCampaignIds: discoveryCampaignIdsCol
+}
 
 const querySchema = z.object({
   has_email: z.enum(['true', 'false']).optional(),
@@ -14,7 +25,7 @@ const querySchema = z.object({
 })
 
 const createPerson = z.object({
-  companyId: z.string().uuid().optional().nullable(),
+  companyId: z.string().uuid(),
   fullName: z.string().optional(),
   email: z.string().email().optional().nullable(),
   phone: z.string().optional().nullable(),
@@ -59,13 +70,15 @@ peopleRoutes.get('/', async (c) => {
     filters.push(isNull(people.linkedinUrl))
   }
   if (campaign_id) {
-    filters.push(eq(people.firstSeenCampaignId, campaign_id))
+    filters.push(
+      sql`exists (select 1 from ${discoveryEvents} where ${discoveryEvents.personId} = ${people.id} and ${discoveryEvents.campaignId} = ${campaign_id})`
+    )
   }
 
   const whereClause = filters.length > 0 ? and(...filters) : undefined
 
   const rows = await db
-    .select()
+    .select(peopleColumns)
     .from(people)
     .where(whereClause)
     .orderBy(desc(people.createdAt))
@@ -81,12 +94,22 @@ peopleRoutes.post('/', async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400)
   }
   const b = parsed.data
+
+  const [company] = await db
+    .select({ id: companies.id })
+    .from(companies)
+    .where(eq(companies.id, b.companyId))
+    .limit(1)
+  if (!company) {
+    return c.json({ error: 'company not found' }, 400)
+  }
+
   const nameNorm =
     b.fullName?.trim().length ? b.fullName.trim().toLowerCase() : null
   const [row] = await db
     .insert(people)
     .values({
-      companyId: b.companyId ?? undefined,
+      companyId: b.companyId,
       fullName: b.fullName,
       nameNormalized: nameNorm ?? undefined,
       email: b.email ?? undefined,
@@ -108,7 +131,10 @@ peopleRoutes.post('/', async (c) => {
 
 peopleRoutes.get('/:id', async (c) => {
   const id = c.req.param('id')
-  const [row] = await db.select().from(people).where(eq(people.id, id))
+  const [row] = await db
+    .select(peopleColumns)
+    .from(people)
+    .where(eq(people.id, id))
   if (!row) {
     return c.json({ error: 'not found' }, 404)
   }

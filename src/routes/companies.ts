@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
@@ -7,12 +7,23 @@ import { companies } from '../db/schema.js'
 
 const createCompany = z.object({
   name: z.string().min(1),
+  website: z.string().url(),
   domain: z.string().optional(),
-  website: z.string().optional(),
   industry: z.string().optional(),
   employeeRange: z.string().optional(),
   hqLocation: z.string().optional()
 })
+
+function deriveDomain(value: string | null | undefined): string | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  return trimmed
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .split('/')[0]
+    .toLowerCase()
+}
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
@@ -46,11 +57,27 @@ companiesRoutes.post('/', async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400)
   }
   const body = parsed.data
+  const domain = body.domain?.trim() || deriveDomain(body.website)
+
+  if (domain) {
+    const [existing] = await db
+      .select()
+      .from(companies)
+      .where(sql`lower(trim(${companies.domain})) = ${domain.toLowerCase()}`)
+      .limit(1)
+    if (existing) {
+      return c.json(
+        { error: 'company already exists', companyId: existing.id },
+        409
+      )
+    }
+  }
+
   const [row] = await db
     .insert(companies)
     .values({
       name: body.name,
-      domain: body.domain,
+      domain: domain ?? undefined,
       website: body.website,
       industry: body.industry,
       employeeRange: body.employeeRange,

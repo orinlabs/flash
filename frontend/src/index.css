@@ -2,57 +2,203 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Italic-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Italic-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    /* Surfaces - warm Ramp-leaning neutrals */
+    --bg: 40 18% 97%; /* #FAFAF7 page bg */
+    --surface: 0 0% 100%; /* card surface */
+    --surface-muted: 40 14% 95%; /* hover / subtle fill */
+    --surface-sunken: 38 15% 93%; /* section dividers */
+
+    /* Borders - hairline */
+    --border-subtle: 36 12% 90%; /* #ECEAE5 */
+    --border-strong: 32 8% 82%; /* #DAD7D1 */
+
+    /* Text */
+    --text: 240 6% 10%; /* #18181B near-black warm */
+    --text-muted: 30 4% 42%; /* secondary copy */
+    --text-faint: 30 5% 60%; /* tertiary */
+
+    /* Accent (Exa cool teal) */
+    --accent: 175 86% 38%; /* #0FB5A8 pine teal */
+    --accent-hover: 175 86% 32%;
+    --accent-soft: 175 70% 94%;
+    --accent-fg: 0 0% 100%;
+
+    /* Semantic */
+    --success: 158 64% 38%;
+    --warning: 36 92% 48%;
+    --error: 0 72% 50%;
+    --info: 205 78% 50%;
+
+    /* CTA primary stays Vercel-true black against the warm bg */
+    --primary: 0 0% 4%; /* #0A0A0A */
+    --primary-fg: 0 0% 100%;
+
+    /* Focus ring */
+    --ring: 175 86% 38%;
+
     --radius: 0.5rem;
+
+    /* shadcn legacy aliases (compat for any not-yet-migrated component) */
+    --background: var(--bg);
+    --foreground: var(--text);
+    --card: var(--surface);
+    --card-foreground: var(--text);
+    --popover: var(--surface);
+    --popover-foreground: var(--text);
+    --primary-foreground: var(--primary-fg);
+    --secondary: var(--surface-muted);
+    --secondary-foreground: var(--text);
+    --muted: var(--surface-muted);
+    --muted-foreground: var(--text-muted);
+    --accent-foreground: var(--accent-fg);
+    --destructive: var(--error);
+    --destructive-foreground: 0 0% 100%;
+    --border: var(--border-subtle);
+    --input: var(--border-subtle);
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --bg: 0 0% 4%; /* #0A0A0A */
+    --surface: 0 0% 7%; /* #111111 */
+    --surface-muted: 0 0% 10%;
+    --surface-sunken: 0 0% 5%;
+    --border-subtle: 0 0% 12%; /* #1F1F1F */
+    --border-strong: 0 0% 18%;
+    --text: 0 0% 93%; /* #EDEDED */
+    --text-muted: 0 0% 63%;
+    --text-faint: 0 0% 45%;
+    --accent: 175 75% 48%;
+    --accent-hover: 175 75% 56%;
+    --accent-soft: 175 60% 14%;
+    --accent-fg: 0 0% 6%;
+    --primary: 0 0% 100%;
+    --primary-fg: 0 0% 6%;
+    --ring: 175 75% 48%;
   }
 
   * {
-    @apply border-border;
+    border-color: hsl(var(--border-subtle));
   }
 
+  html,
   body {
-    @apply bg-background text-foreground antialiased;
+    background-color: hsl(var(--bg));
+    color: hsl(var(--text));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'ss01', 'cv11', 'tnum';
+    font-family:
+      'Geist',
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      'Segoe UI',
+      Roboto,
+      'Helvetica Neue',
+      Arial,
+      sans-serif;
+    letter-spacing: -0.005em;
+  }
+
+  ::selection {
+    background-color: hsl(var(--accent) / 0.22);
+    color: hsl(var(--text));
+  }
+
+  /* Tighten heading rhythm */
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.018em;
+  }
+}
+
+@layer utilities {
+  /* Tabular figures for numeric columns */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Hairline focus ring used by buttons/inputs */
+  .ring-focus {
+    --tw-ring-color: hsl(var(--ring) / 0.45);
+  }
+}
+
+/* Drawer animations (Radix data-state hooks) */
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes overlayFadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes drawerSlideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes drawerSlideOut {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
   }
 }
