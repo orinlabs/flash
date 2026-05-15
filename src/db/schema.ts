@@ -172,6 +172,54 @@ export const people = pgTable(
   ]
 )
 
+export const prospectLists = pgTable(
+  'prospect_lists',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    type: text('type').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [index('prospect_lists_type_idx').on(t.type), index('prospect_lists_created_idx').on(t.createdAt)]
+)
+
+export const prospectListPeople = pgTable(
+  'prospect_list_people',
+  {
+    listId: uuid('list_id')
+      .notNull()
+      .references(() => prospectLists.id, { onDelete: 'cascade' }),
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => people.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    uniqueIndex('prospect_list_people_unique').on(t.listId, t.personId),
+    index('prospect_list_people_list_idx').on(t.listId),
+    index('prospect_list_people_person_idx').on(t.personId)
+  ]
+)
+
+export const prospectListCompanies = pgTable(
+  'prospect_list_companies',
+  {
+    listId: uuid('list_id')
+      .notNull()
+      .references(() => prospectLists.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    uniqueIndex('prospect_list_companies_unique').on(t.listId, t.companyId),
+    index('prospect_list_companies_list_idx').on(t.listId),
+    index('prospect_list_companies_company_idx').on(t.companyId)
+  ]
+)
+
 export const campaignRuns = pgTable(
   'campaign_runs',
   {
@@ -294,6 +342,7 @@ export type Person = typeof people.$inferSelect
 export type Campaign = typeof campaigns.$inferSelect
 export type CampaignRun = typeof campaignRuns.$inferSelect
 export type DiscoveryEvent = typeof discoveryEvents.$inferSelect
+export type ProspectList = typeof prospectLists.$inferSelect
 export type UsageEvent = typeof usageEvents.$inferSelect
 export type Mailbox = typeof mailboxes.$inferSelect
 export type OutreachEvent = typeof outreachEvents.$inferSelect

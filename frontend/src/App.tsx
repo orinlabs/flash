@@ -2,6 +2,7 @@ import {
   Activity,
   Building2,
   Inbox,
+  ListChecks,
   Mail,
   Plug,
   Plus,
@@ -22,12 +23,14 @@ import {
 
 import {
   AgenticSearchModal,
+  type AgenticSearchProgress,
   type AgenticSearchTarget
 } from '@/components/AgenticSearchModal'
 import {
   apiAuthMe,
   apiGet,
   apiPost,
+  apiPostNdjson,
   setUnauthorizedHandler,
   type AuthUser,
   type Campaign,
@@ -36,6 +39,7 @@ import {
   type DraftQueueRow,
   type Mailbox,
   type Person,
+  type ProspectList,
   type UsageByCampaignRow,
   type UsageByRunRow
 } from '@/api'
@@ -54,12 +58,14 @@ import { DraftsPage } from '@/pages/DraftsPage'
 import { MailboxesPage } from '@/pages/MailboxesPage'
 import { PeoplePage } from '@/pages/PeoplePage'
 import { LoginPage } from '@/pages/LoginPage'
+import { ListsPage } from '@/pages/ListsPage'
 import { UsagePage } from '@/pages/UsagePage'
 import { emailToInitials } from '@/lib/userDisplay'
 
 type TabId =
   | 'people'
   | 'companies'
+  | 'lists'
   | 'crawls'
   | 'campaigns'
   | 'drafts'
@@ -78,6 +84,20 @@ type AgenticCompanySearchResponse = {
   selectedCompanyIds: string[]
   errors: Array<{ companyId: string; error: string }>
 }
+type AgenticPeopleSearchStreamEvent =
+  | { type: 'start'; total: number }
+  | {
+      type: 'result'
+      result: { personId: string; fits: boolean; error?: string }
+    }
+  | AgenticPeopleSearchResponse & { type: 'done' }
+type AgenticCompanySearchStreamEvent =
+  | { type: 'start'; total: number }
+  | {
+      type: 'result'
+      result: { companyId: string; fits: boolean; error?: string }
+    }
+  | AgenticCompanySearchResponse & { type: 'done' }
 
 const PAGE_SIZE = 100
 
@@ -86,7 +106,8 @@ const sections: SidebarSection<TabId>[] = [
     label: 'Pipeline',
     items: [
       { id: 'people', label: 'People', icon: Users },
-      { id: 'companies', label: 'Companies', icon: Building2 }
+      { id: 'companies', label: 'Companies', icon: Building2 },
+      { id: 'lists', label: 'Lists', icon: ListChecks }
     ]
   },
   {
@@ -109,6 +130,7 @@ const sections: SidebarSection<TabId>[] = [
 const headerCopy: Record<TabId, { title: string; description: string }> = {
   people: { title: 'People', description: 'Prospects discovered from crawls.' },
   companies: { title: 'Companies', description: 'Accounts found during research.' },
+  lists: { title: 'Lists', description: 'Saved groups of people and companies.' },
   crawls: { title: 'Crawls', description: 'ICP research jobs and workflow runs.' },
   campaigns: {
     title: 'Campaigns',
@@ -131,6 +153,7 @@ const headerCopy: Record<TabId, { title: string; description: string }> = {
 const TAB_IDS: TabId[] = [
   'people',
   'companies',
+  'lists',
   'crawls',
   'campaigns',
   'drafts',
@@ -222,11 +245,13 @@ function FlashApp({
   const [crawls, setCrawls] = useState<Campaign[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
   const [people, setPeople] = useState<Person[]>([])
+  const [lists, setLists] = useState<ProspectList[]>([])
   const [peopleHasMore, setPeopleHasMore] = useState(true)
   const [companiesHasMore, setCompaniesHasMore] = useState(true)
   const [crawlsLoading, setCrawlsLoading] = useState(true)
   const [companiesLoading, setCompaniesLoading] = useState(true)
   const [peopleLoading, setPeopleLoading] = useState(false)
+  const [listsLoading, setListsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [runningId, setRunningId] = useState<string | null>(null)
@@ -329,6 +354,18 @@ function FlashApp({
     }
   }, [])
 
+  const loadLists = useCallback(async () => {
+    setListsLoading(true)
+    try {
+      const res = await apiGet<{ data: ProspectList[] }>('/lists')
+      setLists(res.data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load lists')
+    } finally {
+      setListsLoading(false)
+    }
+  }, [])
+
   const loadPendingDrafts = useCallback(async () => {
     try {
       const res = await apiGet<{ data: DraftQueueRow[]; total: number }>(
@@ -356,6 +393,7 @@ function FlashApp({
         await loadCompanies()
         await loadPeople()
         await loadMailboxes()
+        await loadLists()
         await loadPendingDrafts()
       } catch (e) {
         if (!cancelled) {
@@ -368,7 +406,7 @@ function FlashApp({
     return () => {
       cancelled = true
     }
-  }, [authUser, loadCompanies, loadCrawls, loadPeople, loadMailboxes, loadPendingDrafts])
+  }, [authUser, loadCompanies, loadCrawls, loadPeople, loadMailboxes, loadLists, loadPendingDrafts])
 
   async function runCompanyOutreach(companyId: string) {
     setRunningId(companyId)
@@ -510,6 +548,14 @@ function FlashApp({
         onSelect: () => goToTab('companies')
       },
       {
+        id: 'nav:lists',
+        label: 'Go to Lists',
+        group: 'Jump to',
+        icon: ListChecks,
+        keywords: 'saved groups segments',
+        onSelect: () => goToTab('lists')
+      },
+      {
         id: 'nav:crawls',
         label: 'Go to Crawls',
         group: 'Jump to',
@@ -643,8 +689,28 @@ function FlashApp({
       onSelect: () => openDetail({ type: 'crawl', id: c.id })
     }))
 
-    return [...navItems, ...crawlItems, ...companyItems, ...peopleItems]
-  }, [people, companies, crawls, companyById, peopleByCompanyForSearch, mailboxes, goToTab, openDetail])
+    const listItems: CommandItem[] = lists.map((list) => ({
+      id: 'list:' + list.id,
+      label: list.name,
+      description: list.type === 'people' ? 'People list' : 'Company list',
+      group: 'Lists',
+      icon: ListChecks,
+      keywords: list.type,
+      onSelect: () => goToTab('lists')
+    }))
+
+    return [...navItems, ...listItems, ...crawlItems, ...companyItems, ...peopleItems]
+  }, [
+    people,
+    companies,
+    lists,
+    crawls,
+    companyById,
+    peopleByCompanyForSearch,
+    mailboxes,
+    goToTab,
+    openDetail
+  ])
 
   function loadMorePeople() {
     if (!peopleLoading && peopleHasMore) void loadPeople(people.length)
@@ -654,17 +720,46 @@ function FlashApp({
     if (!companiesLoading && companiesHasMore) void loadCompanies(companies.length)
   }
 
-  async function handleAgenticSearch(target: AgenticSearchTarget, criteria: string) {
+  async function handleAgenticSearch(
+    target: AgenticSearchTarget,
+    criteria: string,
+    onProgress: (progress: AgenticSearchProgress) => void
+  ) {
     if (target === 'people') {
       const personIds =
         activeTab === 'people' ? visiblePersonIds : people.map((person) => person.id)
       if (personIds.length > 200) {
         throw new Error('Agentic search can judge up to 200 loaded people. Add filters first.')
       }
-      const res = await apiPost<AgenticPeopleSearchResponse>('/people/agentic-search', {
-        criteria,
-        personIds
-      })
+      let completed = 0
+      let matched = 0
+      let errors = 0
+      let total = personIds.length
+      const response: { current?: AgenticPeopleSearchResponse } = {}
+      onProgress({ completed, total, matched, errors })
+      await apiPostNdjson<AgenticPeopleSearchStreamEvent>(
+        '/people/agentic-search/stream',
+        { criteria, personIds },
+        (event) => {
+          if (event.type === 'start') {
+            total = event.total
+            onProgress({ completed, total, matched, errors })
+            return
+          }
+          if (event.type === 'result') {
+            completed += 1
+            if (event.result.fits) matched += 1
+            if (event.result.error) errors += 1
+            onProgress({ completed, total, matched, errors })
+            return
+          }
+          response.current = event
+        }
+      )
+      if (!response.current) {
+        throw new Error('Agentic search stream ended before returning results')
+      }
+      const res = response.current
       setAgenticPeopleMatchIds(new Set(res.selectedPersonIds))
       setAgenticCompanyMatchIds(null)
       goToTab('people')
@@ -674,7 +769,8 @@ function FlashApp({
       return {
         selectedCount: res.selectedPersonIds.length,
         totalCount: personIds.length,
-        errorCount: res.errors.length
+        errorCount: res.errors.length,
+        selectedIds: res.selectedPersonIds
       }
     }
 
@@ -683,10 +779,35 @@ function FlashApp({
     if (companyIds.length > 200) {
       throw new Error('Agentic search can judge up to 200 loaded companies. Add filters first.')
     }
-    const res = await apiPost<AgenticCompanySearchResponse>('/companies/agentic-search', {
-      criteria,
-      companyIds
-    })
+    let completed = 0
+    let matched = 0
+    let errors = 0
+    let total = companyIds.length
+    const response: { current?: AgenticCompanySearchResponse } = {}
+    onProgress({ completed, total, matched, errors })
+    await apiPostNdjson<AgenticCompanySearchStreamEvent>(
+      '/companies/agentic-search/stream',
+      { criteria, companyIds },
+      (event) => {
+        if (event.type === 'start') {
+          total = event.total
+          onProgress({ completed, total, matched, errors })
+          return
+        }
+        if (event.type === 'result') {
+          completed += 1
+          if (event.result.fits) matched += 1
+          if (event.result.error) errors += 1
+          onProgress({ completed, total, matched, errors })
+          return
+        }
+        response.current = event
+      }
+    )
+    if (!response.current) {
+      throw new Error('Agentic search stream ended before returning results')
+    }
+    const res = response.current
     setAgenticCompanyMatchIds(new Set(res.selectedCompanyIds))
     setAgenticPeopleMatchIds(null)
     goToTab('companies')
@@ -696,8 +817,25 @@ function FlashApp({
     return {
       selectedCount: res.selectedCompanyIds.length,
       totalCount: companyIds.length,
-      errorCount: res.errors.length
+      errorCount: res.errors.length,
+      selectedIds: res.selectedCompanyIds
     }
+  }
+
+  async function handleCreateListFromAgenticSearch(
+    target: AgenticSearchTarget,
+    name: string,
+    selectedIds: string[]
+  ) {
+    await apiPost('/lists', {
+      name,
+      type: target,
+      personIds: target === 'people' ? selectedIds : [],
+      companyIds: target === 'companies' ? selectedIds : []
+    })
+    await loadLists()
+    setAgenticSearchOpen(false)
+    goToTab('lists')
   }
 
   const header = headerCopy[activeTab]
@@ -762,6 +900,18 @@ function FlashApp({
               Refresh
             </Button>
           </>
+        )
+      case 'lists':
+        return (
+          <Button
+            variant="outline"
+            size="md"
+            iconLeft={RefreshCw}
+            onClick={() => void loadLists()}
+            loading={listsLoading && lists.length > 0}
+          >
+            Refresh
+          </Button>
         )
       case 'crawls':
         return (
@@ -870,6 +1020,7 @@ function FlashApp({
         companyCount={agenticCompanyCount}
         onOpenChange={setAgenticSearchOpen}
         onSearch={handleAgenticSearch}
+        onCreateList={handleCreateListFromAgenticSearch}
       />
 
       {error ? (
@@ -919,6 +1070,17 @@ function FlashApp({
           agenticMatchIds={agenticCompanyMatchIds}
           onClearAgenticResults={() => setAgenticCompanyMatchIds(null)}
           onVisibleIdsChange={setVisibleCompanyIds}
+        />
+      ) : null}
+
+      {activeTab === 'lists' ? (
+        <ListsPage
+          lists={lists}
+          loading={listsLoading}
+          onRefresh={() => void loadLists()}
+          onSelectPerson={(person) => openDetail({ type: 'person', id: person.id })}
+          onSelectCompany={(company) => openDetail({ type: 'company', id: company.id })}
+          onError={(msg) => setError(msg)}
         />
       ) : null}
 

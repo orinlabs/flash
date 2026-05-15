@@ -13,6 +13,7 @@ import { authRoutes, sessionUserFromRequest } from './routes/auth.js'
 import { campaignsRoutes } from './routes/campaigns.js'
 import { companiesRoutes } from './routes/companies.js'
 import { draftsRoutes } from './routes/drafts.js'
+import { listsRoutes } from './routes/lists.js'
 import { mailboxesRoutes } from './routes/mailboxes.js'
 import { peopleRoutes } from './routes/people.js'
 import { usageRoutes } from './routes/usage.js'
@@ -75,6 +76,7 @@ app.route('/auth', authRoutes)
 app.route('/campaigns', campaignsRoutes)
 app.route('/companies', companiesRoutes)
 app.route('/drafts', draftsRoutes)
+app.route('/lists', listsRoutes)
 app.route('/mailboxes', mailboxesRoutes)
 app.route('/people', peopleRoutes)
 app.route('/usage', usageRoutes)

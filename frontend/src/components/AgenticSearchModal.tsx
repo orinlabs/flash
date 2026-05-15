@@ -4,6 +4,7 @@ import type { FormEvent } from 'react'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
@@ -13,6 +14,14 @@ type AgenticSearchResult = {
   selectedCount: number
   totalCount: number
   errorCount: number
+  selectedIds: string[]
+}
+
+export type AgenticSearchProgress = {
+  completed: number
+  total: number
+  matched: number
+  errors: number
 }
 
 interface AgenticSearchModalProps {
@@ -23,8 +32,14 @@ interface AgenticSearchModalProps {
   onOpenChange: (open: boolean) => void
   onSearch: (
     target: AgenticSearchTarget,
-    criteria: string
+    criteria: string,
+    onProgress: (progress: AgenticSearchProgress) => void
   ) => Promise<AgenticSearchResult>
+  onCreateList: (
+    target: AgenticSearchTarget,
+    name: string,
+    selectedIds: string[]
+  ) => Promise<void>
 }
 
 export function AgenticSearchModal({
@@ -33,19 +48,30 @@ export function AgenticSearchModal({
   peopleCount,
   companyCount,
   onOpenChange,
-  onSearch
+  onSearch,
+  onCreateList
 }: AgenticSearchModalProps) {
   const [target, setTarget] = useState<AgenticSearchTarget>(defaultTarget)
   const [criteria, setCriteria] = useState('')
   const [searching, setSearching] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
+  const [progress, setProgress] = useState<AgenticSearchProgress | null>(null)
+  const [lastResult, setLastResult] = useState<{
+    target: AgenticSearchTarget
+    selectedIds: string[]
+  } | null>(null)
+  const [listName, setListName] = useState('')
+  const [savingList, setSavingList] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setTarget(defaultTarget)
     setSummary(null)
     setLocalError(null)
+    setProgress(null)
+    setLastResult(null)
+    setListName('')
   }, [defaultTarget, open])
 
   const targetCount = target === 'people' ? peopleCount : companyCount
@@ -72,8 +98,13 @@ export function AgenticSearchModal({
     setSearching(true)
     setSummary(null)
     setLocalError(null)
+    setProgress({ completed: 0, total: targetCount, matched: 0, errors: 0 })
+    setLastResult(null)
+    setListName('')
     try {
-      const result = await onSearch(target, trimmed)
+      const result = await onSearch(target, trimmed, setProgress)
+      setLastResult({ target, selectedIds: result.selectedIds })
+      setListName('Agentic ' + targetLabel + ' search')
       setSummary(
         'Selected ' +
           result.selectedCount +
@@ -90,6 +121,30 @@ export function AgenticSearchModal({
     }
   }
 
+  async function saveList() {
+    if (!lastResult || lastResult.selectedIds.length === 0) return
+    const trimmed = listName.trim()
+    if (!trimmed) {
+      setLocalError('Name the list before saving it.')
+      return
+    }
+
+    setSavingList(true)
+    setLocalError(null)
+    try {
+      await onCreateList(lastResult.target, trimmed, lastResult.selectedIds)
+      setSummary('Saved "' + trimmed + '" with ' + lastResult.selectedIds.length + ' items.')
+      setLastResult(null)
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Failed to save list')
+    } finally {
+      setSavingList(false)
+    }
+  }
+
+  const progressPercent =
+    progress && progress.total > 0 ? Math.round((progress.completed / progress.total) * 100) : 0
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -103,8 +158,8 @@ export function AgenticSearchModal({
           className={cn(
             'fixed left-1/2 top-[18vh] z-50 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2',
             'overflow-hidden rounded-xl border border-line bg-surface shadow-elevated',
-            'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
-            'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+            'duration-150 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-3',
+            'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-3',
             'focus:outline-none'
           )}
         >
@@ -160,8 +215,47 @@ export function AgenticSearchModal({
               </div>
             ) : null}
             {summary ? (
-              <div className="rounded-md border border-line bg-surface-muted/60 px-3 py-2 text-sm text-ink-muted">
-                {summary}
+              <div className="space-y-3 rounded-md border border-line bg-surface-muted/60 px-3 py-2">
+                <div className="text-sm text-ink-muted">{summary}</div>
+                {lastResult && lastResult.selectedIds.length > 0 ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={listName}
+                      onChange={(event) => setListName(event.target.value)}
+                      placeholder="List name"
+                      className="bg-surface"
+                    />
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="md"
+                      loading={savingList}
+                      onClick={() => void saveList()}
+                    >
+                      Save list
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {progress && searching ? (
+              <div className="space-y-2 rounded-md border border-line bg-surface-muted/60 px-3 py-2">
+                <div className="flex items-center justify-between gap-3 text-sm text-ink-muted">
+                  <span>
+                    Judged {progress.completed} of {progress.total} {targetLabel}
+                  </span>
+                  <span className="font-mono text-xs text-ink-faint">{progressPercent}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-line">
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width]"
+                    style={{ width: progressPercent + '%' }}
+                  />
+                </div>
+                <div className="flex items-center gap-3 text-xs text-ink-faint">
+                  <span>{progress.matched} matched</span>
+                  <span>{progress.errors} errors</span>
+                </div>
               </div>
             ) : null}
 

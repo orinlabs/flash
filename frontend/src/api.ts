@@ -1,9 +1,9 @@
 const apiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? ''
 
-function buildUrl(path: string): string {
-  const p = path.startsWith('/') ? path : `/${path}`
-  if (apiBase) return `${apiBase}${p}`
-  return `/api${p}`
+export function buildUrl(path: string): string {
+  const p = path.startsWith('/') ? path : '/' + path
+  if (apiBase) return apiBase + p
+  return '/api' + p
 }
 
 let onUnauthorized: (() => void) | undefined
@@ -45,6 +45,51 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body)
   })
   return parseJson<T>(res)
+}
+
+export async function apiPostNdjson<T>(
+  path: string,
+  body: unknown,
+  onEvent: (event: T) => void
+): Promise<void> {
+  const res = await fetch(buildUrl(path), {
+    ...cred,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+
+  if (res.status === 401) {
+    onUnauthorized?.()
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || res.statusText)
+  }
+  if (!res.body) {
+    throw new Error('Streaming response was empty')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let newlineIndex = buffer.indexOf('\n')
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim()
+      buffer = buffer.slice(newlineIndex + 1)
+      if (line) onEvent(JSON.parse(line) as T)
+      newlineIndex = buffer.indexOf('\n')
+    }
+  }
+
+  const finalLine = (buffer + decoder.decode()).trim()
+  if (finalLine) onEvent(JSON.parse(finalLine) as T)
 }
 
 export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
@@ -126,6 +171,23 @@ export type Mailbox = {
   oauthExpiresAt: string | null
   createdAt: string
   updatedAt: string
+}
+
+export type ProspectListType = 'people' | 'companies'
+
+export type ProspectList = {
+  id: string
+  name: string
+  type: ProspectListType
+  personCount: number
+  companyCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type ProspectListDetail = ProspectList & {
+  people: Person[]
+  companies: Company[]
 }
 
 export type OutreachEvent = {

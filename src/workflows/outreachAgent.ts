@@ -8,6 +8,9 @@ import {
   listRecentOutreachEvents,
   markCompanyOutreachStatus,
   setNextWake,
+  updateCompanyDetails,
+  updatePersonAtCompany,
+  upsertPersonAtCompany,
   writeStrategy
 } from './repoOutreach.js'
 import {
@@ -16,8 +19,7 @@ import {
   getPerson,
   requiredEnv,
   searchCompanies,
-  searchPeople,
-  upsertPerson
+  searchPeople
 } from './repo.js'
 import { LAVENDER_COLD_EMAIL_101_PROMPT_BLOCK } from '../lib/lavenderColdEmail101.js'
 import { openRouterReasoningConfig } from '../lib/openrouter.js'
@@ -63,6 +65,7 @@ const LOG_TEXT_KEYS = new Set([
   'context',
   'new_text',
   'notes',
+  'outreach_email_instructions',
   'reasoning',
   'sender_bio'
 ])
@@ -314,22 +317,116 @@ const TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'update_company_details',
+      description:
+        "Edit source-backed company/account details for THIS account: profile fields, notes, or account-specific email instructions. Use only when you have better information than what's already stored.",
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: { type: ['string', 'null'] },
+          domain: { type: ['string', 'null'] },
+          website: { type: ['string', 'null'] },
+          industry: { type: ['string', 'null'] },
+          employee_range: { type: ['string', 'null'] },
+          hq_location: { type: ['string', 'null'] },
+          notes: {
+            type: ['string', 'null'],
+            description:
+              'Full replacement company notes. Preserve useful existing notes unless you are intentionally rewriting them.'
+          },
+          outreach_email_instructions: {
+            type: ['string', 'null'],
+            description:
+              'Full replacement account-specific cold email instructions for this company.'
+          },
+          reason: {
+            type: 'string',
+            description: 'One short sentence explaining the source-backed update.'
+          }
+        },
+        required: ['reason']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_person',
+      description:
+        'Edit an existing person who belongs to THIS account. Use after list_people_at_company or get_person when sourced research corrects or enriches contact/profile fields.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          person_id: { type: 'string', description: 'Person id from list_people_at_company/get_person.' },
+          full_name: { type: ['string', 'null'] },
+          title: { type: ['string', 'null'] },
+          seniority: { type: ['string', 'null'] },
+          department: { type: ['string', 'null'] },
+          email: { type: ['string', 'null'] },
+          phone: { type: ['string', 'null'] },
+          linkedin_url: { type: ['string', 'null'] },
+          twitter_url: { type: ['string', 'null'] },
+          notes: {
+            type: ['string', 'null'],
+            description:
+              'Full replacement person notes. Preserve useful existing notes unless you are intentionally rewriting them.'
+          },
+          context: {
+            type: ['string', 'null'],
+            description: 'Why this person matters for outreach, if known.'
+          },
+          lifecycle_status: { type: ['string', 'null'] },
+          reason: {
+            type: 'string',
+            description: 'One short sentence explaining the source-backed update.'
+          }
+        },
+        required: ['person_id', 'reason']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'upsert_person',
       description:
-        'Add (or merge with) a person at THIS account. Use when you discover a new exec, mutual, investor, or other contact worth tracking. Returns the person id you can use in draft_email.',
+        'Add (or merge with) a person at THIS account. Use when you discover a new exec, mutual, investor, or other contact worth tracking. If the person already exists at this account, supplied fields are merged into that record. Returns the person id you can use in draft_email.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
           full_name: { type: 'string' },
           title: { type: ['string', 'null'] },
+          seniority: { type: ['string', 'null'] },
+          department: { type: ['string', 'null'] },
           email: { type: ['string', 'null'] },
+          phone: { type: ['string', 'null'] },
           linkedin_url: { type: ['string', 'null'] },
           twitter_url: { type: ['string', 'null'] },
           notes: { type: ['string', 'null'] },
-          context: { type: 'string', description: 'One paragraph: who they are, why relevant to outreach.' }
+          context: { type: 'string', description: 'One paragraph: who they are, why relevant to outreach.' },
+          lifecycle_status: { type: ['string', 'null'] },
+          reason: {
+            type: 'string',
+            description: 'One short sentence explaining why this person belongs on the account.'
+          }
         },
-        required: ['full_name', 'title', 'email', 'linkedin_url', 'twitter_url', 'notes', 'context']
+        required: [
+          'full_name',
+          'title',
+          'seniority',
+          'department',
+          'email',
+          'phone',
+          'linkedin_url',
+          'twitter_url',
+          'notes',
+          'context',
+          'lifecycle_status',
+          'reason'
+        ]
       }
     }
   },
@@ -536,11 +633,15 @@ async function dispatchTool(ctx: ToolCtx, call: ToolCall): Promise<ToolDispatchR
               id: r.id,
               full_name: r.fullName,
               title: r.title,
+              seniority: r.seniority,
+              department: r.department,
               email: r.email,
+              phone: r.phone,
               linkedin_url: r.linkedinUrl,
               twitter_url: r.twitterUrl,
               notes: r.notes,
-              context: r.context
+              context: r.context,
+              lifecycle_status: r.lifecycleStatus
             }))
           })
         }
@@ -578,10 +679,15 @@ async function dispatchTool(ctx: ToolCtx, call: ToolCall): Promise<ToolDispatchR
             id: person.id,
             full_name: person.fullName,
             title: person.title,
+            seniority: person.seniority,
+            department: person.department,
             email: person.email,
+            phone: person.phone,
             linkedin_url: person.linkedinUrl,
+            twitter_url: person.twitterUrl,
             notes: person.notes,
             context: person.context,
+            lifecycle_status: person.lifecycleStatus,
             company: person.company
               ? { id: person.company.id, name: person.company.name, domain: person.company.domain }
               : null
@@ -658,6 +764,97 @@ async function dispatchTool(ctx: ToolCtx, call: ToolCall): Promise<ToolDispatchR
           })
         }
       }
+      case 'update_company_details': {
+        const out = await updateCompanyDetails(
+          ctx.companyId,
+          {
+            ...(Object.prototype.hasOwnProperty.call(args, 'name')
+              ? { name: (args.name as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'domain')
+              ? { domain: (args.domain as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'website')
+              ? { website: (args.website as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'industry')
+              ? { industry: (args.industry as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'employee_range')
+              ? { employeeRange: (args.employee_range as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'hq_location')
+              ? { hqLocation: (args.hq_location as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'notes')
+              ? { notes: (args.notes as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'outreach_email_instructions')
+              ? {
+                  outreachEmailInstructions:
+                    (args.outreach_email_instructions as string | null | undefined) ?? null
+                }
+              : {})
+          },
+          typeof args.reason === 'string' ? args.reason : null
+        )
+        if (!out.ok) return { kind: 'continue', content: JSON.stringify({ error: out.error }) }
+        return {
+          kind: 'continue',
+          content: JSON.stringify({ ok: true, changed_fields: out.changedFields })
+        }
+      }
+      case 'update_person': {
+        const personId = typeof args.person_id === 'string' ? args.person_id : ''
+        if (!personId.trim()) {
+          return { kind: 'continue', content: JSON.stringify({ error: 'person_id required' }) }
+        }
+        const out = await updatePersonAtCompany(
+          ctx.companyId,
+          personId,
+          {
+            ...(Object.prototype.hasOwnProperty.call(args, 'full_name')
+              ? { fullName: (args.full_name as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'title')
+              ? { title: (args.title as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'seniority')
+              ? { seniority: (args.seniority as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'department')
+              ? { department: (args.department as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'email')
+              ? { email: (args.email as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'phone')
+              ? { phone: (args.phone as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'linkedin_url')
+              ? { linkedinUrl: (args.linkedin_url as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'twitter_url')
+              ? { twitterUrl: (args.twitter_url as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'notes')
+              ? { notes: (args.notes as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'context')
+              ? { context: (args.context as string | null | undefined) ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(args, 'lifecycle_status')
+              ? { lifecycleStatus: (args.lifecycle_status as string | null | undefined) ?? null }
+              : {})
+          },
+          typeof args.reason === 'string' ? args.reason : null
+        )
+        if (!out.ok) return { kind: 'continue', content: JSON.stringify({ error: out.error }) }
+        return {
+          kind: 'continue',
+          content: JSON.stringify({ ok: true, person_id: personId, changed_fields: out.changedFields })
+        }
+      }
       case 'upsert_person': {
         const fullName = typeof args.full_name === 'string' ? args.full_name : ''
         const context = typeof args.context === 'string' ? args.context : ''
@@ -667,40 +864,38 @@ async function dispatchTool(ctx: ToolCtx, call: ToolCall): Promise<ToolDispatchR
             content: JSON.stringify({ error: 'full_name and context are required' })
           }
         }
-        const result = await upsertPerson(
+        const result = await upsertPersonAtCompany(
+          ctx.companyId,
           {
             fullName,
             title: (args.title as string | null | undefined) ?? null,
+            seniority: (args.seniority as string | null | undefined) ?? null,
+            department: (args.department as string | null | undefined) ?? null,
             email: (args.email as string | null | undefined) ?? null,
+            phone: (args.phone as string | null | undefined) ?? null,
             linkedinUrl: (args.linkedin_url as string | null | undefined) ?? null,
             twitterUrl: (args.twitter_url as string | null | undefined) ?? null,
             notes: (args.notes as string | null | undefined) ?? null,
-            context
+            context,
+            lifecycleStatus: (args.lifecycle_status as string | null | undefined) ?? null
           },
-          // Use a synthetic campaign id of the company id — we don't have a campaign here.
-          // upsertPerson stores it on first_seen_campaign_id which is nullable-on-delete.
-          ctx.companyId,
-          ctx.companyId
+          typeof args.reason === 'string' ? args.reason : null
         )
         if (!result.ok) {
-          if (result.reason === 'duplicate') {
-            return {
-              kind: 'continue',
-              content: JSON.stringify({
-                ok: true,
-                person_id: result.personId,
-                note: 'matched existing person'
-              })
-            }
-          }
           return {
             kind: 'continue',
-            content: JSON.stringify({ error: result.reason, message: result.message })
+            content: JSON.stringify({ error: result.error, person_id: result.personId })
           }
         }
         return {
           kind: 'continue',
-          content: JSON.stringify({ ok: true, person_id: result.personId, created: result.created })
+          content: JSON.stringify({
+            ok: true,
+            person_id: result.personId,
+            created: result.created,
+            merged: result.merged,
+            changed_fields: result.changedFields
+          })
         }
       }
       case 'delete_draft': {
@@ -859,7 +1054,8 @@ function buildSystemPrompt(): string {
     'Your goals, in priority order:',
     '1. Find a credible path to a real human inside this company.',
     '2. Draft a thoughtful, specific email (or several) that the operator can review and send from the assigned mailbox.',
-    '3. Maintain the strategy document so the next wake-up has full context. Use list_recent_events to see what already happened (sends, operator actions); use update_strategy for your working plan.',
+    '3. Maintain account records as you learn sourced facts: add useful people with upsert_person, correct existing people with update_person, and update company details with update_company_details.',
+    '4. Maintain the strategy document so the next wake-up has full context. Use list_recent_events to see what already happened (sends, operator actions); use update_strategy for your working plan.',
     '',
     'Channels and angles you are encouraged to explore:',
     '- Cold email to a named exec / IC with a specific reason (recent news, hire, product launch, talk).',
@@ -873,6 +1069,13 @@ function buildSystemPrompt(): string {
     '- Reach out to that small set once or twice with the strongest angle before moving on.',
     '- Only expand to additional people after the first 1-2 targets are clearly exhausted, unavailable, or a much stronger path appears.',
     '- Prefer quality and continuity over breadth: keep the strategy focused on who you are trying now, why them, and what would make you move to the next person.',
+    '',
+    'Record maintenance:',
+    '- Use upsert_person when you discover a real named person at this account worth tracking, even if you are not ready to draft to them yet.',
+    '- Use update_person when a known contact has stale or incomplete title, department, email, phone, LinkedIn/Twitter, notes, context, or lifecycle status.',
+    '- Use update_company_details for sourced corrections or enrichments to the company profile: name, domain, website, industry, employee range, HQ, notes, or account email instructions.',
+    '- Do not overwrite useful existing notes or instructions with shorter weaker text. If replacing notes/instructions, preserve the important prior details in your new value.',
+    '- Never clear a field just because you could not verify it in this session. Clear only when you have evidence it is wrong or obsolete.',
     '',
     LAVENDER_COLD_EMAIL_101_PROMPT_BLOCK,
     '',

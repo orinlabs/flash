@@ -122,8 +122,9 @@ export function CommandPalette({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className={cn(
-            'fixed inset-0 z-50 bg-black/30 backdrop-blur-[2px]',
-            'data-[state=open]:animate-overlayIn data-[state=closed]:animate-overlayOut'
+            'fixed inset-0 z-50 bg-black/20',
+            'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:duration-100',
+            'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-75'
           )}
         />
         <DialogPrimitive.Content
@@ -133,10 +134,10 @@ export function CommandPalette({
           }}
           onKeyDown={handleKeyDown}
           className={cn(
-            'fixed left-1/2 top-[16vh] z-50 w-[min(640px,calc(100vw-2rem))] -translate-x-1/2',
+            'fixed left-1/2 top-[10vh] z-50 w-[min(640px,calc(100vw-2rem))] -translate-x-1/2',
             'overflow-hidden rounded-xl border border-line bg-surface shadow-elevated',
-            'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
-            'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+            'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-2 data-[state=open]:duration-100 data-[state=open]:ease-out',
+            'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=closed]:duration-75 data-[state=closed]:ease-in',
             'focus:outline-none'
           )}
         >

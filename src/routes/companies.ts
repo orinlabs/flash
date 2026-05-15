@@ -143,6 +143,14 @@ type OpenRouterResponse = {
   error?: { message?: string }
 }
 
+type AgenticCompanySearchResult = {
+  companyId: string
+  fits: boolean
+  confidence: number
+  rationale: string
+  error?: string
+}
+
 function extractJsonObject(text: string): unknown {
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
@@ -258,6 +266,24 @@ async function classifyCompanyFit(input: {
   return agenticSearchDecisionSchema.parse(extractJsonObject(text))
 }
 
+function agenticSearchError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function agenticCompanySearchErrors(results: AgenticCompanySearchResult[]) {
+  return results
+    .filter((result) => result.error)
+    .map((result) => ({ companyId: result.companyId, error: result.error }))
+}
+
+function agenticSearchStreamHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no'
+  }
+}
+
 companiesRoutes.post('/agentic-search', async (c) => {
   const parsed = agenticSearchSchema.safeParse(await c.req.json())
   if (!parsed.success) {
@@ -293,7 +319,7 @@ companiesRoutes.post('/agentic-search', async (c) => {
     peopleByCompany.set(person.companyId, current)
   }
 
-  const results = await mapWithConcurrency(
+  const results: AgenticCompanySearchResult[] = await mapWithConcurrency(
     orderedCompanies,
     AGENTIC_COMPANY_SEARCH_CONCURRENCY,
     async (company) => {
@@ -316,7 +342,7 @@ companiesRoutes.post('/agentic-search', async (c) => {
           fits: false,
           confidence: 0,
           rationale: '',
-          error: err instanceof Error ? err.message : String(err)
+          error: agenticSearchError(err)
         }
       }
     }
@@ -325,10 +351,95 @@ companiesRoutes.post('/agentic-search', async (c) => {
   return c.json({
     selectedCompanyIds: results.filter((result) => result.fits).map((result) => result.companyId),
     results,
-    errors: results
-      .filter((result) => result.error)
-      .map((result) => ({ companyId: result.companyId, error: result.error }))
+    errors: agenticCompanySearchErrors(results)
   })
+})
+
+companiesRoutes.post('/agentic-search/stream', async (c) => {
+  const parsed = agenticSearchSchema.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const apiKey = requiredOpenRouterApiKey()
+  const { criteria, companyIds } = parsed.data
+
+  const companyRows = await db
+    .select()
+    .from(companies)
+    .where(inArray(companies.id, companyIds))
+
+  const companyById = new Map(companyRows.map((company) => [company.id, company]))
+  const orderedCompanies = companyIds
+    .map((id) => companyById.get(id))
+    .filter((company): company is typeof companies.$inferSelect => Boolean(company))
+
+  const peopleRows =
+    orderedCompanies.length > 0
+      ? await db
+          .select()
+          .from(people)
+          .where(inArray(people.companyId, orderedCompanies.map((company) => company.id)))
+      : []
+
+  const peopleByCompany = new Map<string, Array<typeof people.$inferSelect>>()
+  for (const person of peopleRows) {
+    if (!person.companyId) continue
+    const current = peopleByCompany.get(person.companyId) ?? []
+    current.push(person)
+    peopleByCompany.set(person.companyId, current)
+  }
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder()
+      const write = (event: unknown) => {
+        controller.enqueue(encoder.encode(JSON.stringify(event) + '\n'))
+      }
+
+      write({ type: 'start', total: orderedCompanies.length })
+      const results: AgenticCompanySearchResult[] = await mapWithConcurrency(
+        orderedCompanies,
+        AGENTIC_COMPANY_SEARCH_CONCURRENCY,
+        async (company) => {
+          let result: AgenticCompanySearchResult
+          try {
+            const decision = await classifyCompanyFit({
+              apiKey,
+              criteria,
+              company,
+              people: peopleByCompany.get(company.id) ?? []
+            })
+            result = {
+              companyId: company.id,
+              fits: decision.fits,
+              confidence: decision.confidence,
+              rationale: decision.rationale
+            }
+          } catch (err) {
+            result = {
+              companyId: company.id,
+              fits: false,
+              confidence: 0,
+              rationale: '',
+              error: agenticSearchError(err)
+            }
+          }
+          write({ type: 'result', result })
+          return result
+        }
+      )
+      write({
+        type: 'done',
+        selectedCompanyIds: results.filter((result) => result.fits).map((result) => result.companyId),
+        results,
+        errors: agenticCompanySearchErrors(results)
+      })
+      controller.close()
+    }
+  })
+
+  return new Response(stream, { headers: agenticSearchStreamHeaders() })
 })
 
 companiesRoutes.patch('/:id/outreach', async (c) => {

@@ -12,6 +12,17 @@ import {
   type OutreachDraft,
   type OutreachEvent
 } from '../db/schema.js'
+import {
+  cleanNullable,
+  getPerson,
+  normalizeDomain,
+  normalizeEmail,
+  normalizeName,
+  normalizeProfileUrl,
+  normalizeUrl,
+  upsertPerson,
+  type PersonDraft
+} from './repo.js'
 
 export type CompanyWithMailbox = Company & {
   mailbox: Mailbox | null
@@ -151,15 +162,216 @@ export async function listPeopleAtCompany(companyId: string, limit = 25) {
       seniority: people.seniority,
       department: people.department,
       email: people.email,
+      phone: people.phone,
       linkedinUrl: people.linkedinUrl,
       twitterUrl: people.twitterUrl,
       notes: people.notes,
-      context: people.context
+      context: people.context,
+      lifecycleStatus: people.lifecycleStatus
     })
     .from(people)
     .where(eq(people.companyId, companyId))
     .orderBy(desc(people.lastSeenAt))
     .limit(limit)
+}
+
+type CompanyDetailsPatch = {
+  name?: string | null
+  domain?: string | null
+  website?: string | null
+  industry?: string | null
+  employeeRange?: string | null
+  hqLocation?: string | null
+  notes?: string | null
+  outreachEmailInstructions?: string | null
+}
+
+type PersonAtCompanyPatch = {
+  fullName?: string | null
+  title?: string | null
+  seniority?: string | null
+  department?: string | null
+  email?: string | null
+  phone?: string | null
+  linkedinUrl?: string | null
+  twitterUrl?: string | null
+  notes?: string | null
+  context?: string | null
+  lifecycleStatus?: string | null
+}
+
+type UpsertPersonAtCompanyDraft = PersonDraft & {
+  lifecycleStatus?: string | null
+}
+
+function hasKey<T extends object>(obj: T, key: keyof T): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key)
+}
+
+function fieldNames(patch: Record<string, unknown>): string[] {
+  return Object.keys(patch).filter((key) => key !== 'updatedAt')
+}
+
+export async function updateCompanyDetails(
+  companyId: string,
+  patch: CompanyDetailsPatch,
+  reason: string | null
+): Promise<{ ok: true; changedFields: string[] } | { ok: false; error: string }> {
+  const updates: Record<string, unknown> = { updatedAt: new Date() }
+
+  if (hasKey(patch, 'name')) {
+    const name = cleanNullable(patch.name)
+    if (!name) return { ok: false, error: 'name cannot be empty' }
+    updates.name = name
+  }
+  if (hasKey(patch, 'domain')) updates.domain = normalizeDomain(patch.domain)
+  if (hasKey(patch, 'website')) updates.website = normalizeUrl(patch.website)
+  if (hasKey(patch, 'industry')) updates.industry = cleanNullable(patch.industry)
+  if (hasKey(patch, 'employeeRange')) updates.employeeRange = cleanNullable(patch.employeeRange)
+  if (hasKey(patch, 'hqLocation')) updates.hqLocation = cleanNullable(patch.hqLocation)
+  if (hasKey(patch, 'notes')) updates.notes = cleanNullable(patch.notes)
+  if (hasKey(patch, 'outreachEmailInstructions')) {
+    const value = cleanNullable(patch.outreachEmailInstructions)
+    updates.outreachEmailInstructions = value ? value.slice(0, MAX_OUTREACH_EMAIL_INSTRUCTIONS) : null
+  }
+
+  const changedFields = fieldNames(updates)
+  if (changedFields.length === 0) return { ok: false, error: 'no company fields supplied' }
+
+  const [updated] = await db
+    .update(companies)
+    .set(updates)
+    .where(eq(companies.id, companyId))
+    .returning({ id: companies.id })
+  if (!updated) return { ok: false, error: 'company not found' }
+
+  await appendOutreachEvent({
+    companyId,
+    kind: 'record_update',
+    summary: reason?.trim() || `Agent updated company fields: ${changedFields.join(', ')}`,
+    details: { entity: 'company', changedFields }
+  })
+  return { ok: true, changedFields }
+}
+
+export async function updatePersonAtCompany(
+  companyId: string,
+  personId: string,
+  patch: PersonAtCompanyPatch,
+  reason: string | null
+): Promise<{ ok: true; changedFields: string[] } | { ok: false; error: string }> {
+  const updates: Record<string, unknown> = { updatedAt: new Date(), lastSeenAt: new Date() }
+
+  if (hasKey(patch, 'fullName')) {
+    const fullName = cleanNullable(patch.fullName)
+    updates.fullName = fullName
+    updates.nameNormalized = normalizeName(fullName)
+  }
+  if (hasKey(patch, 'title')) updates.title = cleanNullable(patch.title)
+  if (hasKey(patch, 'seniority')) updates.seniority = cleanNullable(patch.seniority)
+  if (hasKey(patch, 'department')) updates.department = cleanNullable(patch.department)
+  if (hasKey(patch, 'email')) updates.email = normalizeEmail(patch.email)
+  if (hasKey(patch, 'phone')) updates.phone = cleanNullable(patch.phone)
+  if (hasKey(patch, 'linkedinUrl')) {
+    updates.linkedinUrl = normalizeProfileUrl(patch.linkedinUrl, 'linkedin.com')
+  }
+  if (hasKey(patch, 'twitterUrl')) {
+    updates.twitterUrl =
+      normalizeProfileUrl(patch.twitterUrl, 'twitter.com') ??
+      normalizeProfileUrl(patch.twitterUrl, 'x.com')
+  }
+  if (hasKey(patch, 'notes')) updates.notes = cleanNullable(patch.notes)
+  if (hasKey(patch, 'context')) updates.context = cleanNullable(patch.context)
+  if (hasKey(patch, 'lifecycleStatus')) updates.lifecycleStatus = cleanNullable(patch.lifecycleStatus) ?? 'new'
+
+  const changedFields = fieldNames(updates).filter((key) => key !== 'lastSeenAt')
+  if (changedFields.length === 0) return { ok: false, error: 'no person fields supplied' }
+
+  const [updated] = await db
+    .update(people)
+    .set(updates)
+    .where(and(eq(people.id, personId), eq(people.companyId, companyId)))
+    .returning({ id: people.id })
+  if (!updated) return { ok: false, error: 'person not found at this company' }
+
+  await appendOutreachEvent({
+    companyId,
+    kind: 'record_update',
+    summary: reason?.trim() || `Agent updated person fields: ${changedFields.join(', ')}`,
+    details: { entity: 'person', personId, changedFields }
+  })
+  return { ok: true, changedFields }
+}
+
+export async function upsertPersonAtCompany(
+  companyId: string,
+  draft: UpsertPersonAtCompanyDraft,
+  reason: string | null
+): Promise<
+  | { ok: true; personId: string; created: boolean; merged: boolean; changedFields: string[] }
+  | { ok: false; error: string; personId?: string }
+> {
+  const result = await upsertPerson(draft, companyId, companyId)
+  if (result.ok) {
+    const changedFields: string[] = []
+    const lifecycleStatus = cleanNullable(draft.lifecycleStatus)
+    if (lifecycleStatus) {
+      await db
+        .update(people)
+        .set({ lifecycleStatus, updatedAt: new Date(), lastSeenAt: new Date() })
+        .where(and(eq(people.id, result.personId), eq(people.companyId, companyId)))
+      changedFields.push('lifecycleStatus')
+    }
+    await appendOutreachEvent({
+      companyId,
+      kind: 'record_update',
+      summary: reason?.trim() || `Agent added person: ${draft.fullName}`,
+      details: { entity: 'person', personId: result.personId, created: true, changedFields }
+    })
+    return {
+      ok: true,
+      personId: result.personId,
+      created: result.created,
+      merged: false,
+      changedFields
+    }
+  }
+
+  if (result.reason !== 'duplicate') {
+    return { ok: false, error: result.message }
+  }
+
+  const existing = await getPerson(result.personId)
+  if (!existing || existing.companyId !== companyId) {
+    return {
+      ok: false,
+      error: 'matched existing person outside this company; use search_existing_people before adding',
+      personId: result.personId
+    }
+  }
+
+  const patch: PersonAtCompanyPatch = {}
+  if (cleanNullable(draft.fullName)) patch.fullName = draft.fullName
+  if (cleanNullable(draft.title)) patch.title = draft.title
+  if (cleanNullable(draft.seniority)) patch.seniority = draft.seniority
+  if (cleanNullable(draft.department)) patch.department = draft.department
+  if (cleanNullable(draft.email)) patch.email = draft.email
+  if (cleanNullable(draft.phone)) patch.phone = draft.phone
+  if (cleanNullable(draft.linkedinUrl)) patch.linkedinUrl = draft.linkedinUrl
+  if (cleanNullable(draft.twitterUrl)) patch.twitterUrl = draft.twitterUrl
+  if (cleanNullable(draft.notes)) patch.notes = draft.notes
+  if (cleanNullable(draft.context)) patch.context = draft.context
+  if (cleanNullable(draft.lifecycleStatus)) patch.lifecycleStatus = draft.lifecycleStatus
+  const merged = await updatePersonAtCompany(companyId, result.personId, patch, reason)
+  if (!merged.ok) return { ok: false, error: merged.error, personId: result.personId }
+
+  return {
+    ok: true,
+    personId: result.personId,
+    created: false,
+    merged: true,
+    changedFields: merged.changedFields
+  }
 }
 
 export async function setNextWake(

@@ -1,0 +1,139 @@
+import { desc, eq } from 'drizzle-orm'
+import { Hono } from 'hono'
+import { z } from 'zod'
+
+import { db } from '../db/client.js'
+import {
+  companies,
+  people,
+  prospectListCompanies,
+  prospectListPeople,
+  prospectLists
+} from '../db/schema.js'
+
+const listTypeValues = ['people', 'companies'] as const
+
+const createListSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  type: z.enum(listTypeValues),
+  personIds: z.array(z.string().uuid()).max(500).optional().default([]),
+  companyIds: z.array(z.string().uuid()).max(500).optional().default([])
+})
+
+const addMembersSchema = z.object({
+  personIds: z.array(z.string().uuid()).max(500).optional().default([]),
+  companyIds: z.array(z.string().uuid()).max(500).optional().default([])
+})
+
+export const listsRoutes = new Hono()
+
+type ProspectListRow = typeof prospectLists.$inferSelect
+
+async function listSummary(list: ProspectListRow) {
+  const [personMembers, companyMembers] = await Promise.all([
+    db.select().from(prospectListPeople).where(eq(prospectListPeople.listId, list.id)),
+    db.select().from(prospectListCompanies).where(eq(prospectListCompanies.listId, list.id))
+  ])
+  return {
+    ...list,
+    personCount: personMembers.length,
+    companyCount: companyMembers.length
+  }
+}
+
+async function listDetail(id: string) {
+  const [list] = await db.select().from(prospectLists).where(eq(prospectLists.id, id)).limit(1)
+  if (!list) return null
+
+  if (list.type === 'people') {
+    const members = await db
+      .select({ person: people })
+      .from(prospectListPeople)
+      .innerJoin(people, eq(people.id, prospectListPeople.personId))
+      .where(eq(prospectListPeople.listId, id))
+    return {
+      ...(await listSummary(list)),
+      people: members.map((row) => row.person),
+      companies: []
+    }
+  }
+
+  const members = await db
+    .select({ company: companies })
+    .from(prospectListCompanies)
+    .innerJoin(companies, eq(companies.id, prospectListCompanies.companyId))
+    .where(eq(prospectListCompanies.listId, id))
+  return {
+    ...(await listSummary(list)),
+    people: [],
+    companies: members.map((row) => row.company)
+  }
+}
+
+async function addMembers(input: {
+  list: ProspectListRow
+  personIds: string[]
+  companyIds: string[]
+}) {
+  if (input.list.type === 'people' && input.personIds.length > 0) {
+    await db
+      .insert(prospectListPeople)
+      .values(input.personIds.map((personId) => ({ listId: input.list.id, personId })))
+      .onConflictDoNothing()
+  }
+  if (input.list.type === 'companies' && input.companyIds.length > 0) {
+    await db
+      .insert(prospectListCompanies)
+      .values(input.companyIds.map((companyId) => ({ listId: input.list.id, companyId })))
+      .onConflictDoNothing()
+  }
+}
+
+listsRoutes.get('/', async (c) => {
+  const rows = await db.select().from(prospectLists).orderBy(desc(prospectLists.createdAt))
+  return c.json({ data: await Promise.all(rows.map((row) => listSummary(row))) })
+})
+
+listsRoutes.post('/', async (c) => {
+  const parsed = createListSchema.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const body = parsed.data
+  const [list] = await db
+    .insert(prospectLists)
+    .values({ name: body.name, type: body.type })
+    .returning()
+  await addMembers({ list, personIds: body.personIds, companyIds: body.companyIds })
+  return c.json(await listDetail(list.id), 201)
+})
+
+listsRoutes.post('/:id/members', async (c) => {
+  const id = c.req.param('id')
+  const parsed = addMembersSchema.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const [list] = await db.select().from(prospectLists).where(eq(prospectLists.id, id)).limit(1)
+  if (!list) return c.json({ error: 'not found' }, 404)
+
+  await addMembers({
+    list,
+    personIds: parsed.data.personIds,
+    companyIds: parsed.data.companyIds
+  })
+  await db
+    .update(prospectLists)
+    .set({ updatedAt: new Date() })
+    .where(eq(prospectLists.id, id))
+  return c.json(await listDetail(id))
+})
+
+listsRoutes.get('/:id', async (c) => {
+  const id = c.req.param('id')
+  const detail = await listDetail(id)
+  if (!detail) return c.json({ error: 'not found' }, 404)
+  return c.json(detail)
+})

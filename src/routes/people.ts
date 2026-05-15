@@ -69,6 +69,14 @@ type OpenRouterResponse = {
   error?: { message?: string }
 }
 
+type AgenticPersonSearchResult = {
+  personId: string
+  fits: boolean
+  confidence: number
+  rationale: string
+  error?: string
+}
+
 function extractJsonObject(text: string): unknown {
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
@@ -174,6 +182,24 @@ async function classifyPersonFit(input: {
   }
 
   return agenticSearchDecisionSchema.parse(extractJsonObject(text))
+}
+
+function agenticSearchError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function agenticPeopleSearchErrors(results: AgenticPersonSearchResult[]) {
+  return results
+    .filter((result) => result.error)
+    .map((result) => ({ personId: result.personId, error: result.error }))
+}
+
+function agenticSearchStreamHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no'
+  }
 }
 
 export const peopleRoutes = new Hono()
@@ -293,7 +319,7 @@ peopleRoutes.post('/agentic-search', async (c) => {
       : []
   const companyById = new Map(companyRows.map((company) => [company.id, company]))
 
-  const results = await mapWithConcurrency(
+  const results: AgenticPersonSearchResult[] = await mapWithConcurrency(
     orderedPeople,
     AGENTIC_PEOPLE_SEARCH_CONCURRENCY,
     async (person) => {
@@ -316,7 +342,7 @@ peopleRoutes.post('/agentic-search', async (c) => {
           fits: false,
           confidence: 0,
           rationale: '',
-          error: err instanceof Error ? err.message : String(err)
+          error: agenticSearchError(err)
         }
       }
     }
@@ -325,10 +351,88 @@ peopleRoutes.post('/agentic-search', async (c) => {
   return c.json({
     selectedPersonIds: results.filter((result) => result.fits).map((result) => result.personId),
     results,
-    errors: results
-      .filter((result) => result.error)
-      .map((result) => ({ personId: result.personId, error: result.error }))
+    errors: agenticPeopleSearchErrors(results)
   })
+})
+
+peopleRoutes.post('/agentic-search/stream', async (c) => {
+  const parsed = agenticSearchSchema.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const apiKey = requiredEnv('OPENROUTER_API_KEY')
+  const { criteria, personIds } = parsed.data
+
+  const personRows = await db
+    .select()
+    .from(people)
+    .where(inArray(people.id, personIds))
+
+  const personById = new Map(personRows.map((person) => [person.id, person]))
+  const orderedPeople = personIds
+    .map((id) => personById.get(id))
+    .filter((person): person is typeof people.$inferSelect => Boolean(person))
+
+  const companyIds = orderedPeople
+    .map((person) => person.companyId)
+    .filter((id): id is string => Boolean(id))
+  const companyRows =
+    companyIds.length > 0
+      ? await db.select().from(companies).where(inArray(companies.id, companyIds))
+      : []
+  const companyById = new Map(companyRows.map((company) => [company.id, company]))
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder()
+      const write = (event: unknown) => {
+        controller.enqueue(encoder.encode(JSON.stringify(event) + '\n'))
+      }
+
+      write({ type: 'start', total: orderedPeople.length })
+      const results: AgenticPersonSearchResult[] = await mapWithConcurrency(
+        orderedPeople,
+        AGENTIC_PEOPLE_SEARCH_CONCURRENCY,
+        async (person) => {
+          let result: AgenticPersonSearchResult
+          try {
+            const decision = await classifyPersonFit({
+              apiKey,
+              criteria,
+              person,
+              company: person.companyId ? (companyById.get(person.companyId) ?? null) : null
+            })
+            result = {
+              personId: person.id,
+              fits: decision.fits,
+              confidence: decision.confidence,
+              rationale: decision.rationale
+            }
+          } catch (err) {
+            result = {
+              personId: person.id,
+              fits: false,
+              confidence: 0,
+              rationale: '',
+              error: agenticSearchError(err)
+            }
+          }
+          write({ type: 'result', result })
+          return result
+        }
+      )
+      write({
+        type: 'done',
+        selectedPersonIds: results.filter((result) => result.fits).map((result) => result.personId),
+        results,
+        errors: agenticPeopleSearchErrors(results)
+      })
+      controller.close()
+    }
+  })
+
+  return new Response(stream, { headers: agenticSearchStreamHeaders() })
 })
 
 peopleRoutes.get('/:id', async (c) => {
