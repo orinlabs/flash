@@ -39,6 +39,14 @@ function escapeHtmlAttr(value: string): string {
     .replace(/>/g, '&gt;')
 }
 
+/** Minimal HTML wrapper that preserves plaintext newlines without double paragraph gaps. */
+export function plainTextToHtml(plainBody: string): string {
+  return (
+    '<div style="font-family:sans-serif;font-size:14px;line-height:1.5;white-space:pre-wrap">' +
+    `${escapeHtmlAttr(plainBody)}</div>`
+  )
+}
+
 /**
  * Appends a tracking pixel to HTML. If body is plain text only, wraps it in minimal HTML first.
  */
@@ -49,12 +57,7 @@ export function injectTrackingPixel(html: string | null, plainBody: string, toke
     'style="display:block;width:1px;height:1px;border:0;margin:0;padding:0" ' +
     'role="presentation" />'
 
-  const baseHtml =
-    html?.trim() ||
-    `<div style="font-family:sans-serif;font-size:14px;line-height:1.5">${plainBody
-      .split('\n')
-      .map((line) => (line.trim() ? `<p>${escapeHtmlAttr(line)}</p>` : '<br />'))
-      .join('')}</div>`
+  const baseHtml = html?.trim() || plainTextToHtml(plainBody)
 
   // Insert before closing body if present, else append.
   const lower = baseHtml.toLowerCase()

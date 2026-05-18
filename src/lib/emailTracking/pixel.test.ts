@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it, before, after } from 'node:test'
 
-import { injectTrackingPixel, trackingPixelUrl } from './pixel.js'
+import { injectTrackingPixel, plainTextToHtml, trackingPixelUrl } from './pixel.js'
 
 describe('injectTrackingPixel', () => {
   const prev = process.env.TRACKING_PUBLIC_BASE_URL
@@ -27,7 +27,19 @@ describe('injectTrackingPixel', () => {
 
   it('wraps plain body when html is missing', () => {
     const out = injectTrackingPixel(null, 'Line one\n\nLine two', 'tok_xyz')
-    assert.match(out, /<p>Line one<\/p>/)
+    assert.match(out, /white-space:pre-wrap/)
+    assert.match(out, /Line one/)
+    assert.match(out, /Line two/)
+    assert.doesNotMatch(out, /<p>/)
+    assert.doesNotMatch(out, /<br\s*\/?>/i)
     assert.ok(out.includes(trackingPixelUrl('tok_xyz')))
+  })
+
+  it('preserves paragraph breaks without extra br tags', () => {
+    const html = plainTextToHtml('Hi there,\n\nWanted to follow up.')
+    assert.match(html, /Hi there,/)
+    assert.match(html, /Wanted to follow up\./)
+    assert.doesNotMatch(html, /<br\s*\/?>/i)
+    assert.doesNotMatch(html, /<p>/)
   })
 })
