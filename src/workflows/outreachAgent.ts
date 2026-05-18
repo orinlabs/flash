@@ -472,11 +472,7 @@ const TOOLS = [
     function: {
       name: 'draft_email',
       description:
-<<<<<<< Updated upstream
-        'Create an in-app email draft for the user to review and approve from the Drafts page. Does NOT touch Gmail. Only one pending-review draft is allowed per to_email on this account — to revise an existing draft, delete_draft it first, then call draft_email again. For follow-ups in an existing Gmail thread, set reply_to_draft_id to the id of a prior sent draft from list_drafts (status=sent). Include `agent_rationale`: a short justification for why this person, this angle, this content.',
-=======
-        'Create an in-app email draft for the user to review and approve from the Drafts page. Does NOT touch Gmail. Only one pending-review draft is allowed per to_email on this account — to revise an existing draft, delete_draft it first, then call draft_email again. Never include a signature or sign-off footer in the body — the mailbox signature is appended automatically on send. Include `agent_rationale`: a short justification for why this person, this angle, this content.',
->>>>>>> Stashed changes
+        'Create an in-app email draft for the user to review and approve from the Drafts page. Does NOT touch Gmail. Only one pending-review draft is allowed per to_email on this account — to revise an existing draft, delete_draft it first, then call draft_email again. For follow-ups in an existing Gmail thread, set reply_to_draft_id to the id of a prior sent draft from list_drafts (status=sent). Never include a signature or sign-off footer in the body — the mailbox signature is appended automatically on send. Include `agent_rationale`: a short justification for why this person, this angle, this content.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -490,21 +486,16 @@ const TOOLS = [
             description:
               'Recipient address you can defend: verified from web/DB, OR constructed from a company email pattern you found (e.g. first.last@domain) plus the person\'s real name — say so in agent_rationale. Never guess blindly.'
           },
-<<<<<<< Updated upstream
           subject: {
             type: 'string',
             description:
               'Subject line. For replies, a Re: prefix is added automatically if missing; still write a clear subject.'
           },
-          body: { type: 'string', description: 'Plaintext body.' },
-=======
-          subject: { type: 'string' },
           body: {
             type: 'string',
             description:
               'Plaintext body only. No signature block, sign-off footer, or closing name/title/contact lines — those are added on send.'
           },
->>>>>>> Stashed changes
           body_html: {
             type: ['string', 'null'],
             description: 'Optional HTML version. Leave null for plaintext-only.'
@@ -1216,12 +1207,8 @@ function buildSystemPrompt(): string {
     '- Drafts you create with draft_email do NOT get sent automatically. The operator reviews them in the Drafts UI and approves them; only then do they send.',
     '- Be specific. Generic cold copy is rejected by the operator.',
     '- In draft_email subject and body: do not use an em dash (the long punctuation dash, U+2014). Use a comma, period, colon, hyphen, or parentheses instead.',
-<<<<<<< Updated upstream
-    '- When emails are sent from the Drafts UI, the system records sends/opens/replies/bounces on the timeline. Use list_recent_events, list_email_engagement, and list_drafts before deciding follow-ups.',
-=======
     '- Never include a signature or sign-off footer in draft_email body (no name/title/company/phone/link block at the end). The mailbox signature is appended automatically when the operator sends.',
-    '- When emails are actually sent from the Drafts UI, the system records that on the timeline automatically; use list_recent_events to see sends and failures.',
->>>>>>> Stashed changes
+    '- When emails are sent from the Drafts UI, the system records sends/opens/replies/bounces on the timeline. Use list_recent_events, list_email_engagement, and list_drafts before deciding follow-ups.',
     '- Always end the session with sleep, pause, or mark_completed. Never just stop talking.',
     '- Communicate only through tool calls; do not produce a final text answer.'
   ].join('\n')
