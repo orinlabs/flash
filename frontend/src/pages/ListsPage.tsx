@@ -6,7 +6,8 @@ import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
-import { faviconUrl, formatRelative } from '@/lib/format'
+import { CompanyLogo } from '@/components/CompanyLogo'
+import { formatRelative } from '@/lib/format'
 
 interface Props {
   lists: ProspectList[]
@@ -209,7 +210,6 @@ function ListDetail({
           ))
         ) : (
           companies.map((company) => {
-            const fav = faviconUrl(company.domain ?? company.website)
             return (
               <button
                 key={company.id}
@@ -217,11 +217,7 @@ function ListDetail({
                 onClick={() => onSelectCompany(company)}
                 className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-surface-muted"
               >
-                {fav ? (
-                  <img src={fav} alt="" className="size-5 rounded-sm border border-line" />
-                ) : (
-                  <span className="size-5 rounded-sm border border-line bg-surface-muted" />
-                )}
+                <CompanyLogo company={company} />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-ink">
                     {company.name}

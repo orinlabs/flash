@@ -14,6 +14,7 @@ import {
   DrawerContent,
   DrawerHeader,
 } from '@/components/ui/drawer'
+import { CompanyLogo } from '@/components/CompanyLogo'
 import { StatusDot } from '@/components/ui/status-dot'
 interface Props {
   open: boolean
@@ -36,7 +37,8 @@ interface Props {
   onViewPeopleForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
   onSelectCompaniesForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
   onCompanyChanged?: () => void
-  onError?: (msg: string) => void
+  onCrawlChanged?: () => void
+  onError?: (msg: string | null) => void
 }
 
 export function DetailDrawer({
@@ -60,6 +62,7 @@ export function DetailDrawer({
   onViewPeopleForCrawl,
   onSelectCompaniesForCrawl,
   onCompanyChanged,
+  onCrawlChanged,
   onError
 }: Props) {
   if (!person && !company && !crawl) {
@@ -97,7 +100,16 @@ export function DetailDrawer({
       ? (person?.fullName ?? '?').slice(0, 2)
       : kind === 'crawl'
         ? (crawl?.name ?? '?').slice(0, 2)
-        : (company?.name ?? '?').slice(0, 2)
+        : undefined
+
+  const headerIcon =
+    kind === 'company' && company ? (
+      <CompanyLogo
+        company={company}
+        className="size-10 rounded-md border border-line"
+        placeholderClassName="size-10 rounded-md"
+      />
+    ) : undefined
 
   const headerActions =
     kind === 'crawl' && crawl ? (
@@ -120,6 +132,7 @@ export function DetailDrawer({
           title={title}
           subtitle={subtitle}
           monogram={monogram}
+          icon={headerIcon}
           actions={headerActions}
         />
 
@@ -154,6 +167,8 @@ export function DetailDrawer({
             onSelectPerson={onSelectPerson}
             onViewPeopleForCrawl={onViewPeopleForCrawl}
             onSelectCompaniesForCrawl={onSelectCompaniesForCrawl}
+            onCrawlChanged={onCrawlChanged}
+            onError={onError}
           />
         ) : null}
       </DrawerContent>

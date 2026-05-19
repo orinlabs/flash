@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { StatusDot } from '@/components/ui/status-dot'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
-import { faviconUrl, formatRelative } from '@/lib/format'
+import { CompanyLogo } from '@/components/CompanyLogo'
+import { formatRelative } from '@/lib/format'
 
 interface Props {
   companies: Company[]
@@ -60,19 +61,9 @@ export function CampaignsPage({
       header: 'Account',
       width: '28%',
       cell: (c) => {
-        const fav = faviconUrl(c.domain ?? c.website)
         return (
           <div className="flex items-center gap-2.5">
-            {fav ? (
-              <img
-                src={fav}
-                alt=""
-                className="size-5 rounded-sm border border-line"
-                onError={(e) => ((e.currentTarget.style.visibility = 'hidden'))}
-              />
-            ) : (
-              <span className="size-5 rounded-sm border border-line bg-surface-muted" />
-            )}
+            <CompanyLogo company={c} />
             <span className="truncate font-medium text-ink">{c.name}</span>
           </div>
         )

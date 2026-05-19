@@ -943,6 +943,9 @@ export function FlashApp({
           void loadCompanies(0)
           void loadPendingDrafts()
         }}
+        onCrawlChanged={() => {
+          void loadCrawls()
+        }}
         onError={(msg) => setError(msg)}
       />
 

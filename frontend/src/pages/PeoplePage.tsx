@@ -7,7 +7,8 @@ import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { Input } from '@/components/ui/input'
 import { StatusDot } from '@/components/ui/status-dot'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
-import { domainFromUrl, faviconUrl } from '@/lib/format'
+import { CompanyLogo } from '@/components/CompanyLogo'
+import { domainFromUrl } from '@/lib/format'
 import { TABLE_SEARCH_DEBOUNCE_MS, type PeopleTableFetchParams } from '@/lib/listFetchParams'
 import type { Campaign, CampaignRun, Company, Person } from '@/api'
 
@@ -211,7 +212,6 @@ export function PeoplePage({
       cell: (p) => {
         const company = p.companyId ? companyById.get(p.companyId) : null
         if (!company) return <span className="text-ink-faint">-</span>
-        const fav = faviconUrl(company.domain ?? company.website)
         return (
           <button
             type="button"
@@ -221,16 +221,11 @@ export function PeoplePage({
               onSelectCompany(company.id)
             }}
           >
-            {fav ? (
-              <img
-                src={fav}
-                alt=""
-                className="size-4 rounded-sm"
-                onError={(e) => ((e.currentTarget.style.visibility = 'hidden'))}
-              />
-            ) : (
-              <span className="size-4 rounded-sm bg-surface-muted" />
-            )}
+            <CompanyLogo
+              company={company}
+              className="size-4 rounded-sm"
+              placeholderClassName="size-4 rounded-sm"
+            />
             <span className="truncate underline-offset-4 group-hover:underline">
               {company.name}
             </span>

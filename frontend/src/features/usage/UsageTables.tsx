@@ -1,10 +1,11 @@
-import { Activity, Building2, Globe, Sparkles, Users } from 'lucide-react'
+import { Activity, Building2, Sparkles, Users } from 'lucide-react'
 
 import type { Campaign, Company, Person, UsageByCampaignRow, UsageByCompanyRow, UsageByPersonRow, UsageByRunRow, UsageEvent } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { StatusDot } from '@/components/ui/status-dot'
-import { faviconUrl, formatRelative, formatTokens, formatUsd } from '@/lib/format'
+import { CompanyLogo } from '@/components/CompanyLogo'
+import { formatRelative, formatTokens, formatUsd } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { PaginationFooter, SimpleTable, TableCount, Td, Th, usePagination } from './usage-table-primitives'
@@ -232,7 +233,10 @@ export function CompaniesTable({
       >
         {pageRows.map((r) => {
           const company = r.companyId ? companyById.get(r.companyId) : null
-          const fav = faviconUrl(r.companyDomain ?? company?.website)
+          const logoCompany = company ?? {
+            domain: r.companyDomain,
+            website: r.companyDomain ? `https://${r.companyDomain}` : null
+          }
           return (
             <tr
               key={r.companyId ?? 'unattributed'}
@@ -244,20 +248,11 @@ export function CompaniesTable({
             >
               <Td>
                 <div className="flex min-w-0 items-center gap-2">
-                  {fav ? (
-                    <img
-                      src={fav}
-                      alt=""
-                      className="size-4 rounded-sm"
-                      onError={(e) =>
-                        ((e.currentTarget.style.visibility = 'hidden'))
-                      }
-                    />
-                  ) : (
-                    <span className="grid size-4 place-items-center rounded-sm bg-surface-muted">
-                      <Globe className="size-3 text-ink-faint" />
-                    </span>
-                  )}
+                  <CompanyLogo
+                    company={logoCompany}
+                    className="size-4 rounded-sm"
+                    placeholderClassName="size-4 rounded-sm"
+                  />
                   <span className="truncate text-sm text-ink">
                     {r.companyName ?? (
                       <span className="text-ink-faint">Unattributed</span>

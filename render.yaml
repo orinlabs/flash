@@ -1,0 +1,43 @@
+# Blueprint: API + Postgres + static frontend (Orin Labs workspace).
+# Workflows are added separately in the Render dashboard (Blueprint limitation).
+#
+# Migrations run via preDeployCommand before each API deploy; the API and workflow
+# worker also run migrations on startup as a fallback.
+
+databases:
+  - name: flash-db
+    plan: free
+    region: oregon
+    databaseName: flash
+
+services:
+  - type: web
+    name: flash-api
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: yarn install && yarn build
+    preDeployCommand: yarn migrate:deploy
+    startCommand: yarn start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20.18.0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: flash-db
+          property: connectionString
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_WORKFLOW_SLUG
+        sync: false
+
+  - type: web
+    name: flash-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: yarn install && yarn build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false

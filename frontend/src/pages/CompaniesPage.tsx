@@ -16,7 +16,8 @@ import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { Input } from '@/components/ui/input'
 import { StatusDot } from '@/components/ui/status-dot'
 import { Toolbar, ToolbarSpacer } from '@/components/ui/toolbar'
-import { faviconUrl, formatRelative } from '@/lib/format'
+import { CompanyLogo } from '@/components/CompanyLogo'
+import { formatRelative } from '@/lib/format'
 import { TABLE_SEARCH_DEBOUNCE_MS, type CompaniesTableFetchParams } from '@/lib/listFetchParams'
 import { cn } from '@/lib/utils'
 
@@ -261,19 +262,9 @@ export function CompaniesPage({
       header: 'Company',
       width: '24%',
       cell: (c) => {
-        const fav = faviconUrl(c.domain ?? c.website)
         return (
           <div className="flex items-center gap-2.5">
-            {fav ? (
-              <img
-                src={fav}
-                alt=""
-                className="size-5 rounded-sm border border-line"
-                onError={(e) => ((e.currentTarget.style.visibility = 'hidden'))}
-              />
-            ) : (
-              <span className="size-5 rounded-sm border border-line bg-surface-muted" />
-            )}
+            <CompanyLogo company={c} />
             <span className="truncate font-medium text-ink">{c.name}</span>
           </div>
         )

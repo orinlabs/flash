@@ -1,17 +1,14 @@
 import 'dotenv/config'
 
-import path from 'node:path'
-
-import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { startTaskServer } from '@renderinc/sdk/workflows'
 
-import { db, pool } from '../db/client.js'
+import { pool } from '../db/client.js'
+import { runMigrations } from '../db/migrate.js'
 import './tasks.js'
 
 async function main(): Promise<void> {
   if (process.env.DATABASE_URL) {
-    const migrationsFolder = path.join(process.cwd(), 'drizzle')
-    await migrate(db, { migrationsFolder })
+    await runMigrations()
     console.log('Workflow worker: migrations applied')
   } else {
     console.warn('Workflow worker: DATABASE_URL missing, skipping migrations')
