@@ -235,8 +235,7 @@ export function CompaniesTable({
           const company = r.companyId ? companyById.get(r.companyId) : null
           const logoCompany = company ?? {
             domain: r.companyDomain,
-            website: r.companyDomain ? `https://${r.companyDomain}` : null,
-            logoUrl: null
+            website: r.companyDomain ? `https://${r.companyDomain}` : null
           }
           return (
             <tr

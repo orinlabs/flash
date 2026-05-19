@@ -1,11 +1,10 @@
 import { Globe } from 'lucide-react'
 
-import { companyLogoSrc } from '@/lib/format'
+import { faviconUrl } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 type CompanyLogoProps = {
   company: {
-    logoUrl?: string | null
     domain?: string | null
     website?: string | null
   }
@@ -18,7 +17,7 @@ export function CompanyLogo({
   className = 'size-5 rounded-sm border border-line',
   placeholderClassName
 }: CompanyLogoProps) {
-  const src = companyLogoSrc(company)
+  const src = faviconUrl(company.domain ?? company.website)
   if (!src) {
     return (
       <span

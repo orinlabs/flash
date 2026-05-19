@@ -2,7 +2,6 @@ import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm'
 
 import { db } from '../db/client.js'
 import { campaignRuns, campaigns, companies, discoveryEvents, people } from '../db/schema.js'
-import { logoUrlForCompany, resolveCompanyLogoUrl } from '../lib/companyLogo.js'
 import { estimateExaContentsCostUsd, estimateExaSearchCostUsd } from '../lib/pricing.js'
 import { recordUsageEvent } from '../lib/usage.js'
 
@@ -466,13 +465,6 @@ export async function upsertCompany(draft: CompanyDraft, organizationId: string)
       .limit(1)
     if (existing) {
       const notes = mergeNotes(existing.notes, draft.notes)
-      const mergedDomain = existing.domain ?? domain
-      const logoUrl =
-        !existing.logoUrl && mergedDomain
-          ? ((await resolveCompanyLogoUrl(mergedDomain, existing.website ?? website)) ??
-            logoUrlForCompany({ domain: mergedDomain, website: existing.website ?? website }) ??
-            undefined)
-          : undefined
       const [updated] = await db
         .update(companies)
         .set({
@@ -480,7 +472,6 @@ export async function upsertCompany(draft: CompanyDraft, organizationId: string)
           industry: existing.industry ?? cleanNullable(draft.industry) ?? undefined,
           hqLocation: existing.hqLocation ?? cleanNullable(draft.hqLocation) ?? undefined,
           notes,
-          ...(logoUrl ? { logoUrl } : {}),
           updatedAt: new Date()
         })
         .where(and(eq(companies.id, existing.id), eq(companies.organizationId, organizationId)))
@@ -499,20 +490,12 @@ export async function upsertCompany(draft: CompanyDraft, organizationId: string)
   if (byName) {
     const notes = mergeNotes(byName.notes, draft.notes)
     if ((!byName.website && website) || (!byName.domain && domain) || notes) {
-      const mergedDomain = byName.domain ?? domain
-      const logoUrl =
-        !byName.logoUrl && mergedDomain
-          ? ((await resolveCompanyLogoUrl(mergedDomain, byName.website ?? website)) ??
-            logoUrlForCompany({ domain: mergedDomain, website: byName.website ?? website }) ??
-            undefined)
-          : undefined
       const [updated] = await db
         .update(companies)
         .set({
           website: byName.website ?? website ?? undefined,
           domain: byName.domain ?? domain ?? undefined,
           notes,
-          ...(logoUrl ? { logoUrl } : {}),
           updatedAt: new Date()
         })
         .where(and(eq(companies.id, byName.id), eq(companies.organizationId, organizationId)))
@@ -527,10 +510,6 @@ export async function upsertCompany(draft: CompanyDraft, organizationId: string)
   }
 
   try {
-    const logoUrl =
-      (await resolveCompanyLogoUrl(domain, website)) ??
-      logoUrlForCompany({ domain, website }) ??
-      undefined
     const [created] = await db
       .insert(companies)
       .values({
@@ -538,7 +517,6 @@ export async function upsertCompany(draft: CompanyDraft, organizationId: string)
         name,
         domain: domain ?? undefined,
         website,
-        logoUrl,
         industry: cleanNullable(draft.industry) ?? undefined,
         hqLocation: cleanNullable(draft.hqLocation) ?? undefined,
         notes: cleanNullable(draft.notes) ?? undefined,

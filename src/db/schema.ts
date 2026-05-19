@@ -42,7 +42,6 @@ export const companies = pgTable(
     name: text('name').notNull(),
     domain: text('domain'),
     website: text('website'),
-    logoUrl: text('logo_url'),
     industry: text('industry'),
     employeeRange: text('employee_range'),
     hqLocation: text('hq_location'),

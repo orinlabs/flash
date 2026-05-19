@@ -15,7 +15,6 @@ import { z } from 'zod'
 
 import { db } from '../db/client.js'
 import { companies, discoveryEvents, mailboxes, outreachDrafts, people } from '../db/schema.js'
-import { logoUrlForCompany, resolveCompanyLogoUrl } from '../lib/companyLogo.js'
 import { openRouterReasoningConfig } from '../lib/openrouter.js'
 import type { AppVariables } from '../lib/orgs.js'
 import { startSweepDueAccounts, startWorkAccount } from '../lib/workflowTrigger.js'
@@ -226,11 +225,6 @@ companiesRoutes.post('/', async (c) => {
     }
   }
 
-  const logoUrl =
-    (await resolveCompanyLogoUrl(domain, body.website)) ??
-    logoUrlForCompany({ domain, website: body.website }) ??
-    undefined
-
   const [row] = await db
     .insert(companies)
     .values({
@@ -238,7 +232,6 @@ companiesRoutes.post('/', async (c) => {
       name: body.name,
       domain: domain ?? undefined,
       website: body.website,
-      logoUrl,
       industry: body.industry,
       employeeRange: body.employeeRange,
       hqLocation: body.hqLocation,
