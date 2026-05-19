@@ -1,13 +1,12 @@
 import 'dotenv/config'
 
-import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { sql } from 'drizzle-orm'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import path from 'node:path'
 
 import { db, pool } from './db/client.js'
+import { runMigrations } from './db/migrate.js'
 import { isAuthPublicApiPath, isOrganizationSetupApiPath } from './lib/authPaths.js'
 import {
   chooseActiveOrganization,
@@ -102,23 +101,19 @@ app.route('/organizations', organizationsRoutes)
 app.route('/people', peopleRoutes)
 app.route('/usage', usageRoutes)
 
-async function runMigrations(): Promise<void> {
-  if (!process.env.DATABASE_URL) {
-    console.warn('Skipping migrations: DATABASE_URL not set')
-    return
-  }
-  const folder = path.join(process.cwd(), 'drizzle')
-  await migrate(db, { migrationsFolder: folder })
-  console.log('Migrations applied from', folder)
-}
-
 const port = Number(process.env.PORT) || 3000
 
-runMigrations()
-  .then(() => {
-    serve({ fetch: app.fetch, port })
-    console.log(`API listening on ${port}`)
-  })
+async function start(): Promise<void> {
+  if (process.env.DATABASE_URL) {
+    await runMigrations()
+  } else {
+    console.warn('Skipping migrations: DATABASE_URL not set')
+  }
+  serve({ fetch: app.fetch, port })
+  console.log(`API listening on ${port}`)
+}
+
+start()
   .catch((err) => {
     console.error(err)
     process.exit(1)
