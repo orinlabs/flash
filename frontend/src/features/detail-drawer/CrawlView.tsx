@@ -1,7 +1,15 @@
-import { Building2, Users } from 'lucide-react'
+import { Building2, Minus, Plus, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { apiGet, type Campaign, type CampaignRun, type Person, type UsageByCampaignRow, type UsageByRunRow } from '@/api'
+import {
+  apiGet,
+  apiPatch,
+  type Campaign,
+  type CampaignRun,
+  type Person,
+  type UsageByCampaignRow,
+  type UsageByRunRow
+} from '@/api'
 import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { DrawerBody, DrawerTabs, DrawerTabsContent, DrawerTabsList, DrawerTabsTrigger } from '@/components/ui/drawer'
@@ -23,7 +31,9 @@ export function CrawlView({
   usage,
   onSelectPerson,
   onViewPeopleForCrawl,
-  onSelectCompaniesForCrawl
+  onSelectCompaniesForCrawl,
+  onCrawlChanged,
+  onError
 }: {
   crawl: Campaign
   runs: CampaignRun[]
@@ -34,6 +44,8 @@ export function CrawlView({
   onSelectPerson: (person: Person) => void
   onViewPeopleForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
   onSelectCompaniesForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
+  onCrawlChanged?: () => void
+  onError?: (msg: string | null) => void
 }) {
   const totalQualified = runs.reduce((acc, r) => acc + (r.qualifiedCount ?? 0), 0)
   const companyCount = uniqueCompanyCount(people)
@@ -66,13 +78,10 @@ export function CrawlView({
         <DrawerBody className="space-y-4">
           <SectionCard title="Configuration">
             <KV label="Status" value={<StatusDot status={crawl.status} />} />
-            <KV
-              label="Target"
-              value={
-                <span className="font-mono tabular text-[12.5px] text-ink-muted">
-                  {crawl.targetCount} people
-                </span>
-              }
+            <TargetCountEditor
+              crawl={crawl}
+              onCrawlChanged={onCrawlChanged}
+              onError={onError}
             />
             <KV label="Created" value={formatDate(crawl.createdAt)} />
             <KV label="Updated" value={formatDate(crawl.updatedAt)} />
@@ -456,4 +465,84 @@ function RunRow({
 
 function uniqueCompanyCount(people: Person[]): number {
   return new Set(people.map((person) => person.companyId).filter(Boolean)).size
+}
+
+function TargetCountEditor({
+  crawl,
+  onCrawlChanged,
+  onError
+}: {
+  crawl: Campaign
+  onCrawlChanged?: () => void
+  onError?: (msg: string | null) => void
+}) {
+  const [targetCount, setTargetCount] = useState(crawl.targetCount)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setTargetCount(crawl.targetCount)
+  }, [crawl.id, crawl.targetCount])
+
+  const dirty = targetCount !== crawl.targetCount
+
+  async function save() {
+    if (!dirty || targetCount < 1) return
+    setSaving(true)
+    onError?.(null)
+    try {
+      await apiPatch<Campaign>('/campaigns/' + crawl.id, { targetCount })
+      onCrawlChanged?.()
+    } catch (err) {
+      onError?.(err instanceof Error ? err.message : 'Failed to update target count')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-[100px_1fr] items-start gap-3 border-b border-line py-2 last:border-b-0">
+      <dt className="text-xs uppercase tracking-wide text-ink-faint">Target</dt>
+      <dd className="min-w-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex h-8 items-center rounded-md border border-line bg-surface">
+            <button
+              type="button"
+              className="grid h-full w-8 place-items-center text-ink-muted hover:bg-surface-muted disabled:opacity-40"
+              onClick={() => setTargetCount(Math.max(1, targetCount - 1))}
+              disabled={saving || targetCount <= 1}
+              aria-label="Decrease target"
+            >
+              <Minus className="size-3.5" />
+            </button>
+            <input
+              type="number"
+              min={1}
+              value={targetCount}
+              onChange={(e) => setTargetCount(Math.max(1, Number(e.target.value) || 1))}
+              className="h-full w-14 bg-transparent text-center font-mono text-sm text-ink focus-visible:outline-none"
+              disabled={saving}
+            />
+            <button
+              type="button"
+              className="grid h-full w-8 place-items-center text-ink-muted hover:bg-surface-muted disabled:opacity-40"
+              onClick={() => setTargetCount(targetCount + 1)}
+              disabled={saving}
+              aria-label="Increase target"
+            >
+              <Plus className="size-3.5" />
+            </button>
+          </div>
+          <span className="text-xs text-ink-muted">people</span>
+          {dirty ? (
+            <Button size="sm" variant="outline" loading={saving} onClick={() => void save()}>
+              Save
+            </Button>
+          ) : null}
+        </div>
+        <p className="text-xs text-ink-faint">
+          Approx. people the agent will surface on the next run.
+        </p>
+      </dd>
+    </div>
+  )
 }

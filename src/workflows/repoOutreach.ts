@@ -14,6 +14,7 @@ import {
   type OutreachEvent,
   type OutreachThreadMessage
 } from '../db/schema.js'
+import { logoUrlForCompany, resolveCompanyLogoUrl } from '../lib/companyLogo.js'
 import {
   cleanNullable,
   getPerson,
@@ -336,6 +337,25 @@ export async function updateCompanyDetails(
   }
   if (hasKey(patch, 'domain')) updates.domain = normalizeDomain(patch.domain)
   if (hasKey(patch, 'website')) updates.website = normalizeUrl(patch.website)
+  if (hasKey(patch, 'domain') || hasKey(patch, 'website')) {
+    const [current] = await db
+      .select({
+        domain: companies.domain,
+        website: companies.website
+      })
+      .from(companies)
+      .where(and(eq(companies.id, companyId), eq(companies.organizationId, organizationId)))
+      .limit(1)
+    const mergedDomain =
+      (hasKey(patch, 'domain')
+        ? normalizeDomain(patch.domain)
+        : current?.domain) ?? null
+    const mergedWebsite =
+      (hasKey(patch, 'website') ? normalizeUrl(patch.website) : current?.website) ?? null
+    updates.logoUrl =
+      (await resolveCompanyLogoUrl(mergedDomain, mergedWebsite)) ??
+      logoUrlForCompany({ domain: mergedDomain, website: mergedWebsite })
+  }
   if (hasKey(patch, 'industry')) updates.industry = cleanNullable(patch.industry)
   if (hasKey(patch, 'employeeRange')) updates.employeeRange = cleanNullable(patch.employeeRange)
   if (hasKey(patch, 'hqLocation')) updates.hqLocation = cleanNullable(patch.hqLocation)

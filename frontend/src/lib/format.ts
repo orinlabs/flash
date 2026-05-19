@@ -15,6 +15,14 @@ export function faviconUrl(domain: string | null | undefined): string | null {
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleaned)}&sz=64`
 }
 
+export function companyLogoSrc(company: {
+  logoUrl?: string | null
+  domain?: string | null
+  website?: string | null
+}): string | null {
+  return company.logoUrl ?? faviconUrl(company.domain ?? company.website)
+}
+
 export function domainFromUrl(url: string | null | undefined): string | null {
   if (!url) return null
   try {

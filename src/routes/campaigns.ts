@@ -13,6 +13,14 @@ const createCampaign = z.object({
   targetCount: z.number().int().positive()
 })
 
+const patchCampaign = z
+  .object({
+    targetCount: z.number().int().positive()
+  })
+  .refine((body) => Object.keys(body).length > 0, {
+    message: 'At least one field is required'
+  })
+
 export const campaignsRoutes = new Hono<{ Variables: AppVariables }>()
 
 campaignsRoutes.get('/', async (c) => {
@@ -138,4 +146,27 @@ campaignsRoutes.get('/:id', async (c) => {
     return c.json({ error: 'not found' }, 404)
   }
   return c.json(row)
+})
+
+campaignsRoutes.patch('/:id', async (c) => {
+  const id = c.req.param('id')
+  const organizationId = c.get('organization').id
+  const parsed = patchCampaign.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+  const [updated] = await db
+    .update(campaigns)
+    .set({
+      ...(parsed.data.targetCount !== undefined
+        ? { targetCount: parsed.data.targetCount }
+        : {}),
+      updatedAt: new Date()
+    })
+    .where(and(eq(campaigns.id, id), eq(campaigns.organizationId, organizationId)))
+    .returning()
+  if (!updated) {
+    return c.json({ error: 'not found' }, 404)
+  }
+  return c.json(updated)
 })

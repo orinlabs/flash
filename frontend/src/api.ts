@@ -162,6 +162,7 @@ export type Company = {
   peopleCount?: number
   domain: string | null
   website: string | null
+  logoUrl: string | null
   industry: string | null
   employeeRange: string | null
   hqLocation: string | null

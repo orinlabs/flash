@@ -56,6 +56,7 @@ interface DrawerHeaderProps extends Omit<React.HTMLAttributes<HTMLDivElement>, '
   title: React.ReactNode
   subtitle?: React.ReactNode
   monogram?: string
+  icon?: React.ReactNode
   actions?: React.ReactNode
 }
 
@@ -64,6 +65,7 @@ function DrawerHeader({
   title,
   subtitle,
   monogram,
+  icon,
   actions,
   className,
   ...props
@@ -76,7 +78,8 @@ function DrawerHeader({
       )}
       {...props}
     >
-      {monogram ? (
+      {icon ? <div className="shrink-0">{icon}</div> : null}
+      {!icon && monogram ? (
         <div className="flex size-10 shrink-0 items-center justify-center rounded-md border border-line bg-surface-muted text-sm font-semibold text-ink">
           {monogram.slice(0, 2).toUpperCase()}
         </div>

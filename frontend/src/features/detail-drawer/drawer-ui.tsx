@@ -1,8 +1,8 @@
-import { ExternalLink, Globe } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import type { Company } from '@/api'
-import { faviconUrl } from '@/lib/format'
+import { CompanyLogo } from '@/components/CompanyLogo'
 import { cn } from '@/lib/utils'
 
 export function Stat({ label, value }: { label: string; value: ReactNode }) {
@@ -78,20 +78,11 @@ export function ExternalAnchor({
 }
 
 export function CompanyFavicon({ company }: { company: Company }) {
-  const fav = faviconUrl(company.domain ?? company.website)
-  if (!fav) {
-    return (
-      <span className="grid size-8 place-items-center rounded-md border border-line bg-surface-muted">
-        <Globe className="size-4 text-ink-faint" />
-      </span>
-    )
-  }
   return (
-    <img
-      src={fav}
-      alt=""
+    <CompanyLogo
+      company={company}
       className="size-8 rounded-md border border-line"
-      onError={(e) => ((e.currentTarget.style.visibility = 'hidden'))}
+      placeholderClassName="size-8 rounded-md"
     />
   )
 }

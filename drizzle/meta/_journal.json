@@ -78,6 +78,13 @@
       "when": 1778826660000,
       "tag": "0010_draft_email_replies",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778827770000,
+      "tag": "0011_company_logo",
+      "breakpoints": true
     }
   ]
 }
