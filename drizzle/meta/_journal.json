@@ -78,6 +78,20 @@
       "when": 1778826660000,
       "tag": "0010_draft_email_replies",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778827770000,
+      "tag": "0011_outreach_drafts_channel",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1778828880000,
+      "tag": "0012_external_email_candidates",
+      "breakpoints": true
     }
   ]
 }

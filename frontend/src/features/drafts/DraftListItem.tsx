@@ -1,4 +1,4 @@
-import { Sparkles } from 'lucide-react'
+import { Mail, MessageSquare, Sparkles } from 'lucide-react'
 
 import type { DraftQueueRow } from '@/api'
 import { StatusDot } from '@/components/ui/status-dot'
@@ -24,11 +24,21 @@ export function DraftListItem({
   onSelect: () => void
 }) {
   const { draft, company, person } = row
+  const isLinkedin = draft.channel === 'linkedin'
   const rationale = snippet(draft.agentRationale)
+  const recipientFallback = isLinkedin
+    ? person?.fullName ?? 'LinkedIn recipient'
+    : draft.toEmail ?? '(no recipient)'
   const personLine = person?.fullName
     ? person.fullName + (person.title ? ' · ' + person.title : '')
-    : draft.toEmail
+    : recipientFallback
   const time = formatRelative(draft.createdAt)
+
+  const ChannelIcon = isLinkedin ? MessageSquare : Mail
+  const primaryLine = isLinkedin
+    ? snippet(draft.body, 80) ?? '(empty message)'
+    : draft.subject || '(no subject)'
+  const headlineLabel = company?.name ?? (isLinkedin ? person?.fullName ?? 'LinkedIn message' : '(unknown company)')
 
   return (
     <li>
@@ -50,9 +60,14 @@ export function DraftListItem({
 
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-[13px] font-semibold text-ink">
-              {company?.name ?? '(unknown company)'}
-            </span>
+            <ChannelIcon
+              className={cn(
+                'size-3 shrink-0',
+                isLinkedin ? 'text-accent' : 'text-ink-muted'
+              )}
+              aria-label={isLinkedin ? 'LinkedIn message' : 'Email'}
+            />
+            <span className="truncate text-[13px] font-semibold text-ink">{headlineLabel}</span>
             {showStatusDot ? <StatusDot status={draft.status} size="sm" /> : null}
           </div>
           {time ? (
@@ -62,7 +77,7 @@ export function DraftListItem({
           ) : null}
         </div>
 
-        <div className="truncate text-[13px] text-ink">{draft.subject || '(no subject)'}</div>
+        <div className="truncate text-[13px] text-ink">{primaryLine}</div>
 
         {rationale ? (
           <div className="flex items-start gap-1.5 text-2xs text-ink-muted">

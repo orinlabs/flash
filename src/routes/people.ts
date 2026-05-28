@@ -14,14 +14,18 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { db } from '../db/client.js'
-import { companies, discoveryEvents, people } from '../db/schema.js'
+import { companies, discoveryEvents, outreachDrafts, outreachEvents, people } from '../db/schema.js'
+import { LAVENDER_COLD_EMAIL_101_PROMPT_BLOCK } from '../lib/lavenderColdEmail101.js'
 import { openRouterReasoningConfig } from '../lib/openrouter.js'
 import type { AppVariables } from '../lib/orgs.js'
+import { recordUsageEvent, withUsageContext } from '../lib/usage.js'
 import { requiredEnv } from '../workflows/repo.js'
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const AGENTIC_PEOPLE_SEARCH_MODEL = 'openai/gpt-5-nano'
 const AGENTIC_PEOPLE_SEARCH_CONCURRENCY = 50
+const DRAFT_MESSAGES_MODEL = 'openai/gpt-5-mini'
+const DRAFT_MESSAGES_CONCURRENCY = 20
 
 const discoveryCampaignIdsCol = sql<
   string[]
@@ -88,6 +92,26 @@ const agenticSearchDecisionSchema = z.object({
 
 type AgenticPersonDecision = z.infer<typeof agenticSearchDecisionSchema>
 
+const draftMessagesSchema = z.object({
+  prompt: z.string().trim().min(1).max(4000),
+  channel: z.enum(['email', 'linkedin']),
+  personIds: z.array(z.string().uuid()).min(1).max(100)
+})
+
+const draftMessageDecisionSchema = z.object({
+  subject: z.string().max(200).optional(),
+  body: z.string().min(1).max(8000)
+})
+
+type DraftMessageDecision = z.infer<typeof draftMessageDecisionSchema>
+
+type DraftMessageResult = {
+  personId: string
+  subject: string | null
+  body: string
+  error?: string
+}
+
 type OpenRouterResponse = {
   choices?: Array<{
     message?: {
@@ -95,6 +119,11 @@ type OpenRouterResponse = {
       refusal?: string
     }
   }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  }
   error?: { message?: string }
 }
 
@@ -536,6 +565,386 @@ peopleRoutes.post('/agentic-search/stream', async (c) => {
   })
 
   return new Response(stream, { headers: agenticSearchStreamHeaders() })
+})
+
+function formatDraftHeader(channel: 'email' | 'linkedin'): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const stamp =
+    now.getFullYear() +
+    '-' +
+    pad(now.getMonth() + 1) +
+    '-' +
+    pad(now.getDate()) +
+    ' ' +
+    pad(now.getHours()) +
+    ':' +
+    pad(now.getMinutes())
+  const label = channel === 'email' ? 'email' : 'LinkedIn message'
+  return '--- Draft (' + label + ') · ' + stamp + ' ---'
+}
+
+function formatDraftNoteBlock(input: {
+  channel: 'email' | 'linkedin'
+  prompt: string
+  subject: string | null
+  body: string
+}): string {
+  const lines: string[] = [formatDraftHeader(input.channel)]
+  lines.push('Prompt: ' + input.prompt.trim())
+  if (input.channel === 'email' && input.subject) {
+    lines.push('Subject: ' + input.subject.trim())
+  }
+  lines.push('')
+  lines.push(input.body.trim())
+  lines.push('---')
+  return lines.join('\n')
+}
+
+function draftSystemPrompt(channel: 'email' | 'linkedin'): string {
+  if (channel === 'email') {
+    return [
+      'You are an outreach copywriter drafting a personalized cold intro email on behalf of the operator.',
+      'You will receive: an operator prompt (the angle / theme to use), a target person record, and the company they work at if known.',
+      'Write ONE short, specific email tailored to this person using only the supplied facts. Do not invent details.',
+      '',
+      LAVENDER_COLD_EMAIL_101_PROMPT_BLOCK,
+      '',
+      'Hard rules:',
+      '- Do not use an em dash (U+2014). Use a comma, period, colon, hyphen, or parentheses instead.',
+      '- Do not include a signature, sign-off footer, or contact block. The operator appends their own signature.',
+      '- Do not invent names, employers, titles, schools, products, mutual connections, or claims.',
+      '- If you cannot personalize meaningfully from the provided facts, still produce a thoughtful, brief intro grounded only in what is given.',
+      '',
+      'Return ONLY a JSON object with this exact shape:',
+      '{"subject": string, "body": string}'
+    ].join('\n')
+  }
+  return [
+    'You are an outreach copywriter drafting a personalized LinkedIn message on behalf of the operator.',
+    'You will receive: an operator prompt (the angle / theme to use), a target person record, and the company they work at if known.',
+    'Write ONE short LinkedIn message tailored to this person using only the supplied facts. Do not invent details.',
+    '',
+    'Style rules for LinkedIn:',
+    '- Very short. Aim for roughly 60-90 words, no more.',
+    '- Conversational, friendly, lowercase-leaning. Not stiff or salesy.',
+    '- No subject line, no formal sign-off, no signature.',
+    '- Lead with a specific, real observation (not generic flattery).',
+    '- End with a light call to conversation (a single, easy-to-answer ask).',
+    '- Do not use an em dash (U+2014).',
+    '- Do not invent facts, mutual connections, schools, or shared employers.',
+    '',
+    'Return ONLY a JSON object with this exact shape:',
+    '{"body": string}'
+  ].join('\n')
+}
+
+function draftUserMessage(input: {
+  prompt: string
+  channel: 'email' | 'linkedin'
+  person: typeof people.$inferSelect
+  company: typeof companies.$inferSelect | null
+}): string {
+  return JSON.stringify(
+    {
+      channel: input.channel,
+      operator_prompt: input.prompt,
+      person: {
+        fullName: input.person.fullName,
+        title: input.person.title,
+        seniority: input.person.seniority,
+        department: input.person.department,
+        email: input.person.email,
+        linkedinUrl: input.person.linkedinUrl,
+        twitterUrl: input.person.twitterUrl,
+        context: input.person.context,
+        notes: input.person.notes,
+        icpKeywords: input.person.icpKeywords
+      },
+      company: input.company
+        ? {
+            name: input.company.name,
+            domain: input.company.domain,
+            website: input.company.website,
+            industry: input.company.industry,
+            employeeRange: input.company.employeeRange,
+            hqLocation: input.company.hqLocation,
+            notes: input.company.notes,
+            outreachStrategy: input.company.outreachStrategy
+          }
+        : null
+    },
+    null,
+    2
+  )
+}
+
+async function draftPersonMessage(input: {
+  apiKey: string
+  prompt: string
+  channel: 'email' | 'linkedin'
+  person: typeof people.$inferSelect
+  company: typeof companies.$inferSelect | null
+}): Promise<DraftMessageDecision> {
+  const model = process.env.OPENROUTER_DRAFT_MESSAGES_MODEL ?? DRAFT_MESSAGES_MODEL
+  const res = await fetch(OPENROUTER_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + input.apiKey,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://api.flash.orinlabs.ai',
+      'X-Title': 'Flash Draft Messages'
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.5,
+      messages: [
+        { role: 'system', content: draftSystemPrompt(input.channel) },
+        { role: 'user', content: draftUserMessage(input) }
+      ],
+      reasoning: openRouterReasoningConfig()
+    })
+  })
+
+  if (!res.ok) {
+    throw new Error('OpenRouter call failed (' + res.status + '): ' + (await res.text()))
+  }
+
+  const payload = (await res.json()) as OpenRouterResponse
+  if (payload.error?.message) {
+    throw new Error('OpenRouter error: ' + payload.error.message)
+  }
+
+  await recordUsageEvent({
+    provider: 'openrouter',
+    operation: 'draft_messages',
+    model,
+    promptTokens: payload.usage?.prompt_tokens ?? null,
+    completionTokens: payload.usage?.completion_tokens ?? null,
+    totalTokens: payload.usage?.total_tokens ?? null,
+    metadata: { channel: input.channel }
+  })
+
+  const message = payload.choices?.[0]?.message
+  if (message?.refusal) {
+    throw new Error('Model refused: ' + message.refusal)
+  }
+  const text = message?.content
+  if (!text) {
+    throw new Error('model returned no content')
+  }
+  const parsed = draftMessageDecisionSchema.parse(extractJsonObject(text))
+  if (input.channel === 'email' && !parsed.subject?.trim()) {
+    throw new Error('model omitted subject for email channel')
+  }
+  return parsed
+}
+
+async function appendDraftToNotes(input: {
+  personId: string
+  organizationId: string
+  block: string
+}): Promise<void> {
+  await db
+    .update(people)
+    .set({
+      notes: sql`coalesce(${people.notes} || E'\n\n', '') || ${input.block}`,
+      updatedAt: new Date()
+    })
+    .where(
+      and(eq(people.id, input.personId), eq(people.organizationId, input.organizationId))
+    )
+}
+
+peopleRoutes.post('/draft-messages/stream', async (c) => {
+  const organizationId = c.get('organization').id
+  const parsed = draftMessagesSchema.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const apiKey = requiredEnv('OPENROUTER_API_KEY')
+  const { prompt, channel, personIds } = parsed.data
+
+  const personRows = await db
+    .select()
+    .from(people)
+    .where(and(eq(people.organizationId, organizationId), inArray(people.id, personIds)))
+
+  const personById = new Map(personRows.map((person) => [person.id, person]))
+  const orderedPeople = personIds
+    .map((id) => personById.get(id))
+    .filter((person): person is typeof people.$inferSelect => Boolean(person))
+
+  const companyIds = orderedPeople
+    .map((person) => person.companyId)
+    .filter((id): id is string => Boolean(id))
+  const companyRows =
+    companyIds.length > 0
+      ? await db
+          .select()
+          .from(companies)
+          .where(
+            and(eq(companies.organizationId, organizationId), inArray(companies.id, companyIds))
+          )
+      : []
+  const companyById = new Map(companyRows.map((company) => [company.id, company]))
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder()
+      const write = (event: unknown) => {
+        controller.enqueue(encoder.encode(JSON.stringify(event) + '\n'))
+      }
+
+      await withUsageContext({ organizationId }, async () => {
+        write({ type: 'start', total: orderedPeople.length })
+
+        let generated = 0
+        let errors = 0
+
+        const results: DraftMessageResult[] = await mapWithConcurrency(
+          orderedPeople,
+          DRAFT_MESSAGES_CONCURRENCY,
+          async (person) => {
+            let result: DraftMessageResult
+            try {
+              const company = person.companyId
+                ? (companyById.get(person.companyId) ?? null)
+                : null
+              const decision = await draftPersonMessage({
+                apiKey,
+                prompt,
+                channel,
+                person,
+                company
+              })
+              const subject = channel === 'email' ? (decision.subject ?? '').trim() : null
+              const body = decision.body.trim()
+              const block = formatDraftNoteBlock({
+                channel,
+                prompt,
+                subject,
+                body
+              })
+              await appendDraftToNotes({
+                personId: person.id,
+                organizationId,
+                block
+              })
+              result = {
+                personId: person.id,
+                subject: subject && subject.length > 0 ? subject : null,
+                body
+              }
+              generated += 1
+            } catch (err) {
+              result = {
+                personId: person.id,
+                subject: null,
+                body: '',
+                error: err instanceof Error ? err.message : String(err)
+              }
+              errors += 1
+            }
+            write({ type: 'result', result })
+            return result
+          }
+        )
+
+        write({
+          type: 'done',
+          generated,
+          errors,
+          results
+        })
+      })
+
+      controller.close()
+    }
+  })
+
+  return new Response(stream, { headers: agenticSearchStreamHeaders() })
+})
+
+const logLinkedinSchema = z.object({
+  body: z.string().trim().min(1).max(8000),
+  sentAt: z
+    .string()
+    .datetime()
+    .optional()
+    .transform((s) => (s ? new Date(s) : new Date())),
+  companyId: z.string().uuid().optional().nullable(),
+  status: z.enum(['pending_review', 'sent']).optional().default('sent')
+})
+
+peopleRoutes.post('/:id/log-linkedin-message', async (c) => {
+  const id = c.req.param('id')
+  const organizationId = c.get('organization').id
+  const parsed = logLinkedinSchema.safeParse(await c.req.json())
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400)
+  }
+
+  const [person] = await db
+    .select()
+    .from(people)
+    .where(and(eq(people.id, id), eq(people.organizationId, organizationId)))
+    .limit(1)
+  if (!person) return c.json({ error: 'person not found' }, 404)
+
+  let companyId = parsed.data.companyId ?? person.companyId
+  if (companyId) {
+    const [company] = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(and(eq(companies.id, companyId), eq(companies.organizationId, organizationId)))
+      .limit(1)
+    if (!company) {
+      return c.json({ error: 'company not found' }, 400)
+    }
+  } else {
+    companyId = null
+  }
+
+  const sentAt = parsed.data.status === 'sent' ? parsed.data.sentAt : null
+
+  const [row] = await db
+    .insert(outreachDrafts)
+    .values({
+      organizationId,
+      channel: 'linkedin',
+      companyId,
+      mailboxId: null,
+      personId: id,
+      toEmail: null,
+      subject: null,
+      body: parsed.data.body.trim(),
+      bodyHtml: null,
+      status: parsed.data.status,
+      sentAt
+    })
+    .returning()
+
+  if (companyId && parsed.data.status === 'sent') {
+    await db.insert(outreachEvents).values({
+      organizationId,
+      companyId,
+      kind: 'linkedin_sent',
+      summary:
+        'LinkedIn message logged by operator (to ' +
+        (person.fullName ?? 'person') +
+        ')',
+      details: {
+        draftId: row.id,
+        personId: id,
+        sentAt: sentAt?.toISOString() ?? null,
+        bodyPreview: parsed.data.body.slice(0, 500)
+      }
+    })
+  }
+
+  return c.json(row, 201)
 })
 
 peopleRoutes.get('/:id', async (c) => {

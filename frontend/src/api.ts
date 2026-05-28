@@ -229,13 +229,16 @@ export type OutreachDraftStatus =
   | 'discarded'
   | 'failed'
 
+export type OutreachDraftChannel = 'email' | 'linkedin'
+
 export type OutreachDraft = {
   id: string
-  companyId: string
-  mailboxId: string
+  channel: OutreachDraftChannel
+  companyId: string | null
+  mailboxId: string | null
   personId: string | null
-  toEmail: string
-  subject: string
+  toEmail: string | null
+  subject: string | null
   body: string
   bodyHtml: string | null
   status: OutreachDraftStatus
@@ -267,8 +270,9 @@ export type DraftQueueRow = {
 
 export type SentEmailRow = {
   id: string
-  toEmail: string
-  subject: string
+  channel: OutreachDraftChannel
+  toEmail: string | null
+  subject: string | null
   sentAt: string | null
   gmailMessageId: string | null
   person: { id: string; fullName: string | null; title: string | null } | null
@@ -360,6 +364,52 @@ export type UsageEvent = {
   campaignName: string | null
   personName: string | null
   companyName: string | null
+}
+
+export type ExternalEmailCandidateStatus = 'pending' | 'imported' | 'ignored'
+
+export type ExternalEmailCandidateClassification =
+  | 'cold_intro'
+  | 'follow_up'
+  | 'other'
+
+export type ExternalEmailCandidate = {
+  id: string
+  organizationId: string
+  mailboxId: string
+  gmailMessageId: string
+  gmailThreadId: string | null
+  fromEmail: string | null
+  toEmail: string | null
+  subject: string | null
+  bodyPreview: string | null
+  sentAt: string | null
+  classification: ExternalEmailCandidateClassification
+  confidence: string | null
+  rationale: string | null
+  status: ExternalEmailCandidateStatus
+  importedDraftId: string | null
+  createdAt: string
+  updatedAt: string
+  mailbox: {
+    id: string
+    email: string
+    displayName: string | null
+  } | null
+}
+
+export type InboxCandidatesScanSummary = {
+  mailboxesScanned: number
+  scanned: number
+  candidates: number
+  skipped: number
+  errors: number
+}
+
+export type InboxCandidatesCounts = {
+  pending: number
+  imported: number
+  ignored: number
 }
 
 export type Person = {

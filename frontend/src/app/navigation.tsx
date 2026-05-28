@@ -1,4 +1,14 @@
-import { Activity, Building2, Inbox, ListChecks, Mail, Plug, Search, Users } from 'lucide-react'
+import {
+  Activity,
+  Building2,
+  Inbox,
+  ListChecks,
+  Mail,
+  MailSearch,
+  Plug,
+  Search,
+  Users
+} from 'lucide-react'
 
 import type { SidebarSection } from '@/components/layout/Sidebar'
 
@@ -9,6 +19,7 @@ export type TabId =
   | 'crawls'
   | 'campaigns'
   | 'drafts'
+  | 'inbox'
   | 'mailboxes'
   | 'usage'
 
@@ -26,7 +37,8 @@ export const sections: SidebarSection<TabId>[] = [
     items: [
       { id: 'crawls', label: 'Crawls', icon: Search },
       { id: 'campaigns', label: 'Campaigns', icon: Mail },
-      { id: 'drafts', label: 'Drafts', icon: Inbox }
+      { id: 'drafts', label: 'Drafts', icon: Inbox },
+      { id: 'inbox', label: 'Inbox', icon: MailSearch }
     ]
   },
   {
@@ -51,6 +63,10 @@ export const headerCopy: Record<TabId, { title: string; description: string }> =
     title: 'Drafts',
     description: 'Daily review queue. Approve to send, discard, or regenerate.'
   },
+  inbox: {
+    title: 'Inbox',
+    description: 'Intro emails detected in your connected mailboxes. Pick which to add to pipeline.'
+  },
   mailboxes: {
     title: 'Mailboxes',
     description: 'Connect Gmail accounts the agent can send from on your approval.'
@@ -68,6 +84,7 @@ const TAB_IDS: TabId[] = [
   'crawls',
   'campaigns',
   'drafts',
+  'inbox',
   'mailboxes',
   'usage'
 ]

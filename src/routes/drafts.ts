@@ -52,6 +52,14 @@ const discardBodySchema = z.object({
   saveInstructionsToMailbox: z.boolean().optional()
 })
 
+const markSentBodySchema = z.object({
+  sentAt: z
+    .string()
+    .datetime()
+    .optional()
+    .transform((s) => (s ? new Date(s) : undefined))
+})
+
 async function maybeAppendEmailInstructionsFromFeedback(input: {
   reviewNotes: string
   organizationId: string
@@ -145,6 +153,7 @@ draftsRoutes.get('/:id', async (c) => {
     ? await db
         .select({
           id: outreachDrafts.id,
+          channel: outreachDrafts.channel,
           toEmail: outreachDrafts.toEmail,
           subject: outreachDrafts.subject,
           sentAt: outreachDrafts.sentAt,
@@ -212,9 +221,33 @@ draftsRoutes.post('/:id/approve', async (c) => {
     .where(and(eq(outreachDrafts.id, id), eq(outreachDrafts.organizationId, organizationId)))
     .limit(1)
   if (!existing) return c.json({ error: 'not found' }, 404)
+  if (existing.channel !== 'email') {
+    return c.json(
+      {
+        error:
+          'cannot approve non-email draft via this endpoint; use POST /drafts/:id/mark-sent for LinkedIn drafts'
+      },
+      409
+    )
+  }
   if (existing.status !== 'pending_review' && existing.status !== 'failed') {
     return c.json({ error: `cannot approve draft in status ${existing.status}` }, 409)
   }
+  if (
+    !existing.mailboxId ||
+    !existing.companyId ||
+    !existing.toEmail ||
+    !existing.subject
+  ) {
+    return c.json(
+      { error: 'email draft is missing mailbox, company, recipient, or subject' },
+      409
+    )
+  }
+  const draftMailboxId = existing.mailboxId
+  const draftCompanyId = existing.companyId
+  const draftToEmail = existing.toEmail
+  const draftSubject = existing.subject
 
   // Flip to approved first so a concurrent request doesn't double-send.
   await db
@@ -226,7 +259,7 @@ draftsRoutes.post('/:id/approve', async (c) => {
     const [mailbox] = await db
       .select({ signature: mailboxes.signature })
       .from(mailboxes)
-      .where(and(eq(mailboxes.id, existing.mailboxId), eq(mailboxes.organizationId, organizationId)))
+      .where(and(eq(mailboxes.id, draftMailboxId), eq(mailboxes.organizationId, organizationId)))
       .limit(1)
     const signature = mailbox?.signature ?? null
     const outgoingBody = appendMailboxSignature(existing.body, signature)
@@ -237,11 +270,11 @@ draftsRoutes.post('/:id/approve', async (c) => {
     const trackingToken = createTrackingToken()
     const outgoingBodyHtml = injectTrackingPixel(baseHtml, outgoingBody, trackingToken)
 
-    const reply = await resolveReplyContextForDraft(existing.mailboxId, existing)
+    const reply = await resolveReplyContextForDraft(draftMailboxId, existing)
     const sent = await sendMessage({
-      mailboxId: existing.mailboxId,
-      to: existing.toEmail,
-      subject: existing.subject,
+      mailboxId: draftMailboxId,
+      to: draftToEmail,
+      subject: draftSubject,
       body: outgoingBody,
       bodyHtml: outgoingBodyHtml,
       threadId: reply?.threadId ?? existing.gmailThreadId,
@@ -251,13 +284,13 @@ draftsRoutes.post('/:id/approve', async (c) => {
     const updated = await markDraftSent(id, organizationId, sent, trackingToken)
     await appendOutreachEvent({
       organizationId,
-      companyId: existing.companyId,
+      companyId: draftCompanyId,
       kind: 'email_sent',
-      summary: `Email sent to ${existing.toEmail}: ${existing.subject}`,
+      summary: `Email sent to ${draftToEmail}: ${draftSubject}`,
       details: {
         draftId: id,
-        toEmail: existing.toEmail,
-        subject: existing.subject,
+        toEmail: draftToEmail,
+        subject: draftSubject,
         gmailMessageId: sent.gmailMessageId,
         gmailThreadId: sent.gmailThreadId
       }
@@ -268,13 +301,67 @@ draftsRoutes.post('/:id/approve', async (c) => {
     const failed = await markDraftFailed(id, organizationId, message)
     await appendOutreachEvent({
       organizationId,
-      companyId: existing.companyId,
+      companyId: draftCompanyId,
       kind: 'error',
       summary: `Send failed: ${message.slice(0, 200)}`,
       details: { draftId: id }
     })
     return c.json({ error: message, draft: failed }, 502)
   }
+})
+
+draftsRoutes.post('/:id/mark-sent', async (c) => {
+  const id = c.req.param('id')
+  const organizationId = c.get('organization').id
+  const parsed = markSentBodySchema.safeParse(await c.req.json().catch(() => ({})))
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400)
+
+  const [existing] = await db
+    .select()
+    .from(outreachDrafts)
+    .where(and(eq(outreachDrafts.id, id), eq(outreachDrafts.organizationId, organizationId)))
+    .limit(1)
+  if (!existing) return c.json({ error: 'not found' }, 404)
+  if (existing.channel === 'email') {
+    return c.json(
+      {
+        error:
+          'email drafts cannot be marked sent manually; use POST /drafts/:id/approve to actually send'
+      },
+      409
+    )
+  }
+  if (existing.status !== 'pending_review') {
+    return c.json({ error: `cannot mark draft sent in status ${existing.status}` }, 409)
+  }
+
+  const sentAt = parsed.data.sentAt ?? new Date()
+  const [row] = await db
+    .update(outreachDrafts)
+    .set({
+      status: 'sent',
+      sentAt,
+      sendError: null,
+      updatedAt: new Date()
+    })
+    .where(and(eq(outreachDrafts.id, id), eq(outreachDrafts.organizationId, organizationId)))
+    .returning()
+
+  if (existing.companyId) {
+    await appendOutreachEvent({
+      organizationId,
+      companyId: existing.companyId,
+      kind: 'linkedin_sent',
+      summary: 'LinkedIn message marked sent by operator',
+      details: {
+        draftId: id,
+        sentAt: sentAt.toISOString(),
+        personId: existing.personId
+      }
+    })
+  }
+
+  return c.json(row)
 })
 
 draftsRoutes.post('/:id/discard', async (c) => {
@@ -293,7 +380,12 @@ draftsRoutes.post('/:id/discard', async (c) => {
   const saveAccount = Boolean(body.saveInstructionsToAccount)
   const saveMailbox = Boolean(body.saveInstructionsToMailbox)
   let instructionAppend: { lines: string[]; error?: string } = { lines: [] }
-  if (notes && (saveAccount || saveMailbox)) {
+  if (
+    notes &&
+    (saveAccount || saveMailbox) &&
+    existing.companyId &&
+    existing.mailboxId
+  ) {
     instructionAppend = await maybeAppendEmailInstructionsFromFeedback({
       reviewNotes: notes,
       organizationId,
@@ -304,13 +396,15 @@ draftsRoutes.post('/:id/discard', async (c) => {
     })
   }
   const updated = await markDraftDiscarded(id, organizationId, notes || null)
-  await appendOutreachEvent({
-    organizationId,
-    companyId: existing.companyId,
-    kind: 'note',
-    summary: `Operator discarded draft: ${existing.subject}`,
-    details: { draftId: id, reviewNotes: notes || null }
-  })
+  if (existing.companyId) {
+    await appendOutreachEvent({
+      organizationId,
+      companyId: existing.companyId,
+      kind: 'note',
+      summary: `Operator discarded draft: ${existing.subject ?? '(no subject)'}`,
+      details: { draftId: id, reviewNotes: notes || null }
+    })
+  }
   return c.json({ ...updated, instructionAppend })
 })
 
@@ -325,6 +419,14 @@ draftsRoutes.post('/:id/regenerate', async (c) => {
     .where(and(eq(outreachDrafts.id, id), eq(outreachDrafts.organizationId, organizationId)))
     .limit(1)
   if (!existing) return c.json({ error: 'not found' }, 404)
+  if (existing.channel !== 'email' || !existing.companyId || !existing.mailboxId) {
+    return c.json(
+      { error: 'regenerate is only supported for email drafts on a company account' },
+      409
+    )
+  }
+  const draftCompanyId = existing.companyId
+  const draftMailboxId = existing.mailboxId
   const saveAccount = Boolean(parsed.data.saveInstructionsToAccount)
   const saveMailbox = Boolean(parsed.data.saveInstructionsToMailbox)
   let instructionAppend: { lines: string[]; error?: string } = { lines: [] }
@@ -332,8 +434,8 @@ draftsRoutes.post('/:id/regenerate', async (c) => {
     instructionAppend = await maybeAppendEmailInstructionsFromFeedback({
       reviewNotes: parsed.data.reviewNotes,
       organizationId,
-      companyId: existing.companyId,
-      mailboxId: existing.mailboxId,
+      companyId: draftCompanyId,
+      mailboxId: draftMailboxId,
       saveToAccount: saveAccount,
       saveToMailbox: saveMailbox
     })
@@ -341,7 +443,7 @@ draftsRoutes.post('/:id/regenerate', async (c) => {
   const discarded = await markDraftDiscarded(id, organizationId, parsed.data.reviewNotes)
   await appendOutreachEvent({
     organizationId,
-    companyId: existing.companyId,
+    companyId: draftCompanyId,
     kind: 'decision',
     summary: `Operator asked for a rewrite. Notes: ${parsed.data.reviewNotes.slice(0, 200)}`,
     details: { draftId: id, reviewNotes: parsed.data.reviewNotes }
@@ -349,12 +451,12 @@ draftsRoutes.post('/:id/regenerate', async (c) => {
   await db
     .update(companies)
     .set({ outreachNextWakeAt: new Date(), updatedAt: new Date() })
-    .where(and(eq(companies.id, existing.companyId), eq(companies.organizationId, organizationId)))
+    .where(and(eq(companies.id, draftCompanyId), eq(companies.organizationId, organizationId)))
 
   let workflowTriggered = false
   let workflowError: string | undefined
   try {
-    workflowTriggered = await startWorkAccount(existing.companyId, organizationId)
+    workflowTriggered = await startWorkAccount(draftCompanyId, organizationId)
   } catch (e) {
     workflowError = e instanceof Error ? e.message : String(e)
   }

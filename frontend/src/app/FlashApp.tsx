@@ -16,6 +16,11 @@ import {
   type AgenticSearchTarget
 } from '@/components/AgenticSearchModal'
 import {
+  DraftMessagesModal,
+  type DraftMessagesChannel,
+  type DraftMessagesProgress
+} from '@/components/DraftMessagesModal'
+import {
   apiGet,
   apiPost,
   apiPostNdjson,
@@ -25,6 +30,7 @@ import {
   type CampaignRun,
   type Company,
   type DraftQueueRow,
+  type InboxCandidatesCounts,
   type Mailbox,
   type Person,
   type ProspectList,
@@ -41,6 +47,7 @@ import { CompaniesPage } from '@/pages/CompaniesPage'
 import { CrawlsPage } from '@/pages/CrawlsPage'
 import { DetailDrawer } from '@/pages/DetailDrawer'
 import { DraftsPage } from '@/pages/DraftsPage'
+import { InboxPage } from '@/pages/InboxPage'
 import { MailboxesPage } from '@/pages/MailboxesPage'
 import { PeoplePage } from '@/pages/PeoplePage'
 import { ListsPage } from '@/pages/ListsPage'
@@ -63,6 +70,7 @@ import type {
   AgenticPeopleSearchResponse,
   AgenticPeopleSearchStreamEvent,
   DetailSelection,
+  DraftMessagesStreamEvent,
   PagedResponse,
   PeopleCrawlFilter
 } from './types'
@@ -149,6 +157,7 @@ export function FlashApp({
     new Map()
   )
   const [pendingDraftCount, setPendingDraftCount] = useState(0)
+  const [pendingInboxCount, setPendingInboxCount] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [paletteQuery, setPaletteQuery] = useState('')
   const {
@@ -161,6 +170,8 @@ export function FlashApp({
     onError: setError
   })
   const [agenticSearchOpen, setAgenticSearchOpen] = useState(false)
+  const [draftMessagesOpen, setDraftMessagesOpen] = useState(false)
+  const [selectedPersonIds, setSelectedPersonIds] = useState<Set<string>>(new Set())
   const [peopleFetchParams, setPeopleFetchParams] = useState<PeopleTableFetchParams>({})
   const [companiesFetchParams, setCompaniesFetchParams] = useState<CompaniesTableFetchParams>({})
   const peopleFetchParamsRef = useRef(peopleFetchParams)
@@ -338,6 +349,15 @@ export function FlashApp({
     }
   }, [])
 
+  const loadInboxCounts = useCallback(async () => {
+    try {
+      const counts = await apiGet<InboxCandidatesCounts>('/inbox-candidates/counts')
+      setPendingInboxCount(counts.pending)
+    } catch {
+      // non-fatal
+    }
+  }, [])
+
   useEffect(() => {
     if (!authUser) return
     let cancelled = false
@@ -348,6 +368,7 @@ export function FlashApp({
         await loadMailboxes()
         await loadLists()
         await loadPendingDrafts()
+        await loadInboxCounts()
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Failed to load data')
@@ -359,7 +380,7 @@ export function FlashApp({
     return () => {
       cancelled = true
     }
-  }, [authUser, loadCrawls, loadMailboxes, loadLists, loadPendingDrafts])
+  }, [authUser, loadCrawls, loadMailboxes, loadLists, loadPendingDrafts, loadInboxCounts])
 
   useEffect(() => {
     if (!authUser) return
@@ -680,6 +701,58 @@ export function FlashApp({
     goToTab('lists')
   }
 
+  async function handleDraftMessages(
+    channel: DraftMessagesChannel,
+    prompt: string,
+    onProgress: (progress: DraftMessagesProgress) => void
+  ) {
+    const personIds = Array.from(selectedPersonIds)
+    if (personIds.length === 0) {
+      throw new Error('Select at least one person before drafting.')
+    }
+    let completed = 0
+    let generated = 0
+    let errors = 0
+    let total = personIds.length
+    let lastEvent: { generated: number; errors: number; total: number } | null = null
+    onProgress({ completed, total, generated, errors })
+
+    await apiPostNdjson<DraftMessagesStreamEvent>(
+      '/people/draft-messages/stream',
+      { channel, prompt, personIds },
+      (event) => {
+        if (event.type === 'start') {
+          total = event.total
+          onProgress({ completed, total, generated, errors })
+          return
+        }
+        if (event.type === 'result') {
+          completed += 1
+          if (event.result.error) errors += 1
+          else generated += 1
+          onProgress({ completed, total, generated, errors })
+          return
+        }
+        lastEvent = {
+          generated: event.generated,
+          errors: event.errors,
+          total: completed
+        }
+      }
+    )
+
+    if (!lastEvent) {
+      throw new Error('Drafting ended before returning a summary')
+    }
+    void loadPeople(0)
+    const summary: { generated: number; errors: number; total: number } = lastEvent
+    return {
+      generatedCount: summary.generated,
+      errorCount: summary.errors,
+      totalCount: personIds.length
+    }
+  }
+
   const peoplePageCrawlRuns = peopleCrawlFilter
     ? (crawlRunsByCrawlId[peopleCrawlFilter.campaignId] ?? [])
     : []
@@ -706,7 +779,9 @@ export function FlashApp({
       crawlsLoading={crawlsLoading}
       mailboxes={mailboxes}
       mailboxesLoading={mailboxesLoading}
+      selectedPersonCount={selectedPersonIds.size}
       onOpenAgenticSearch={() => setAgenticSearchOpen(true)}
+      onOpenDraftMessages={() => setDraftMessagesOpen(true)}
       onLoadPeople={() => void loadPeople(0)}
       onLoadCompanies={() => void loadCompanies(0)}
       onLoadLists={() => void loadLists()}
@@ -732,22 +807,37 @@ export function FlashApp({
 
   const sidebarSections = sections.map((section) => ({
     ...section,
-    items: section.items.map((item) =>
-      item.id === 'drafts' && pendingDraftCount > 0
-        ? {
-            ...item,
-            badge: (
-              <Badge
-                variant="accent"
-                className="h-5 min-w-5 justify-center px-1.5 text-[11px]"
-                aria-label={pendingDraftCount + ' pending review drafts'}
-              >
-                {pendingDraftCount}
-              </Badge>
-            )
-          }
-        : item
-    )
+    items: section.items.map((item) => {
+      if (item.id === 'drafts' && pendingDraftCount > 0) {
+        return {
+          ...item,
+          badge: (
+            <Badge
+              variant="accent"
+              className="h-5 min-w-5 justify-center px-1.5 text-[11px]"
+              aria-label={pendingDraftCount + ' pending review drafts'}
+            >
+              {pendingDraftCount}
+            </Badge>
+          )
+        }
+      }
+      if (item.id === 'inbox' && pendingInboxCount > 0) {
+        return {
+          ...item,
+          badge: (
+            <Badge
+              variant="accent"
+              className="h-5 min-w-5 justify-center px-1.5 text-[11px]"
+              aria-label={pendingInboxCount + ' pending intro candidates'}
+            >
+              {pendingInboxCount}
+            </Badge>
+          )
+        }
+      }
+      return item
+    })
   }))
 
   return (
@@ -786,6 +876,13 @@ export function FlashApp({
         onCreateList={handleCreateListFromAgenticSearch}
       />
 
+      <DraftMessagesModal
+        open={draftMessagesOpen}
+        selectedCount={selectedPersonIds.size}
+        onOpenChange={setDraftMessagesOpen}
+        onDraft={handleDraftMessages}
+      />
+
       {error ? (
         <div className="border-b border-line bg-bg px-5 py-2.5">
           <Banner
@@ -817,6 +914,8 @@ export function FlashApp({
           onCrawlFilterChange={handlePeopleCrawlFilterChange}
           onClearCrawlFilter={clearPeopleCrawlFilter}
           onVisibleIdsChange={setVisiblePersonIds}
+          selectedPersonIds={selectedPersonIds}
+          onSelectedPersonIdsChange={setSelectedPersonIds}
         />
       ) : null}
 
@@ -898,6 +997,18 @@ export function FlashApp({
         <DraftsPage mailboxes={mailboxes} onPendingReviewChanged={loadPendingDrafts} />
       ) : null}
 
+      {activeTab === 'inbox' ? (
+        <InboxPage
+          onCandidatesChanged={() => {
+            void loadInboxCounts()
+            void loadPendingDrafts()
+          }}
+          onOpenDraft={() => {
+            goToTab('drafts')
+          }}
+        />
+      ) : null}
+
       {activeTab === 'mailboxes' ? (
         <MailboxesPage
           mailboxes={mailboxes}
@@ -941,6 +1052,9 @@ export function FlashApp({
         onSelectCompaniesForCrawl={selectCompaniesForCrawl}
         onCompanyChanged={() => {
           void loadCompanies(0)
+          void loadPendingDrafts()
+        }}
+        onPersonChanged={() => {
           void loadPendingDrafts()
         }}
         onError={(msg) => setError(msg)}

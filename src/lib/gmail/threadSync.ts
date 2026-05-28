@@ -1,7 +1,7 @@
-import { and, eq, isNotNull, lt, or, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, lt, ne, or, sql } from 'drizzle-orm'
 
 import { db } from '../../db/client.js'
-import { outreachDrafts, outreachThreadMessages } from '../../db/schema.js'
+import { outreachDrafts, outreachThreadMessages, people } from '../../db/schema.js'
 import { appendOutreachEvent } from '../../workflows/repoOutreach.js'
 import { getMailbox, getValidAccessToken } from './oauth.js'
 
@@ -121,9 +121,21 @@ export type SyncDraftThreadResult = {
 
 export async function syncDraftThread(draftId: string): Promise<SyncDraftThreadResult | null> {
   const [draft] = await db.select().from(outreachDrafts).where(eq(outreachDrafts.id, draftId)).limit(1)
-  if (!draft || draft.status !== 'sent' || !draft.gmailThreadId || !draft.gmailMessageId) {
+  if (
+    !draft ||
+    draft.channel !== 'email' ||
+    draft.status !== 'sent' ||
+    !draft.gmailThreadId ||
+    !draft.gmailMessageId ||
+    !draft.mailboxId ||
+    !draft.companyId ||
+    !draft.toEmail
+  ) {
     return null
   }
+
+  const draftToEmail = draft.toEmail
+  const draftCompanyId = draft.companyId
 
   const mailbox = await getMailbox(draft.mailboxId)
   if (!mailbox || mailbox.status !== 'active') return null
@@ -145,7 +157,7 @@ export async function syncDraftThread(draftId: string): Promise<SyncDraftThreadR
     const kind = classifyInboundMessage({
       fromEmail,
       subject,
-      recipientEmail: draft.toEmail
+      recipientEmail: draftToEmail
     })
     if (kind === 'other') continue
 
@@ -158,7 +170,7 @@ export async function syncDraftThread(draftId: string): Promise<SyncDraftThreadR
       .insert(outreachThreadMessages)
       .values({
         organizationId: draft.organizationId,
-        companyId: draft.companyId,
+        companyId: draftCompanyId,
         draftId: draft.id,
         gmailMessageId: message.id,
         kind,
@@ -178,9 +190,9 @@ export async function syncDraftThread(draftId: string): Promise<SyncDraftThreadR
     if (kind === 'reply') {
       await appendOutreachEvent({
         organizationId: draft.organizationId,
-        companyId: draft.companyId,
+        companyId: draftCompanyId,
         kind: 'email_reply',
-        summary: `Reply from ${fromEmail ?? 'unknown'} re: ${draft.subject}`,
+        summary: `Reply from ${fromEmail ?? 'unknown'} re: ${draft.subject ?? '(no subject)'}`,
         details: {
           draftId: draft.id,
           gmailMessageId: message.id,
@@ -189,12 +201,24 @@ export async function syncDraftThread(draftId: string): Promise<SyncDraftThreadR
           body_preview: bodyText.slice(0, 500)
         }
       })
+      if (draft.personId) {
+        await db
+          .update(people)
+          .set({ lifecycleStatus: 'replied', updatedAt: new Date() })
+          .where(
+            and(
+              eq(people.id, draft.personId),
+              eq(people.organizationId, draft.organizationId),
+              ne(people.lifecycleStatus, 'replied')
+            )
+          )
+      }
     } else if (kind === 'bounce') {
       await appendOutreachEvent({
         organizationId: draft.organizationId,
-        companyId: draft.companyId,
+        companyId: draftCompanyId,
         kind: 'email_bounced',
-        summary: `Bounce for ${draft.toEmail}: ${draft.subject}`,
+        summary: `Bounce for ${draftToEmail}: ${draft.subject ?? '(no subject)'}`,
         details: {
           draftId: draft.id,
           gmailMessageId: message.id,
@@ -203,6 +227,19 @@ export async function syncDraftThread(draftId: string): Promise<SyncDraftThreadR
           body_preview: bodyText.slice(0, 500)
         }
       })
+      if (draft.personId) {
+        await db
+          .update(people)
+          .set({ lifecycleStatus: 'bounced', updatedAt: new Date() })
+          .where(
+            and(
+              eq(people.id, draft.personId),
+              eq(people.organizationId, draft.organizationId),
+              ne(people.lifecycleStatus, 'bounced'),
+              ne(people.lifecycleStatus, 'replied')
+            )
+          )
+      }
     }
   }
 

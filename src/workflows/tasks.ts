@@ -1,5 +1,9 @@
 import { task } from '@renderinc/sdk/workflows'
 
+import {
+  scanAllActiveMailboxes,
+  type MailboxScanResult
+} from '../lib/gmail/mailboxScan.js'
 import { attributeUsageToCompany, withUsageContext } from '../lib/usage.js'
 import { findPersonAgent, type FindPersonAgentResult } from './agent.js'
 import { workAccountAgent, type WorkAccountAgentResult } from './outreachAgent.js'
@@ -297,5 +301,38 @@ export const sweepDueAccounts = task(
       else failed += 1
     }
     return { swept: ids.length, succeeded, failed }
+  }
+)
+
+/**
+ * Scan every active connected mailbox's Sent folder for cold-intro emails
+ * that were sent outside Flash. Each is classified by an LLM and stored as
+ * an external_email_candidates row for the operator to triage in the Inbox UI.
+ */
+export const scanConnectedMailboxes = task(
+  {
+    name: 'scanConnectedMailboxes',
+    timeoutSeconds: 1800,
+    retry: { maxRetries: 0, waitDurationMs: 1000, backoffScaling: 1 }
+  },
+  async function scanConnectedMailboxes(): Promise<{
+    mailboxesScanned: number
+    candidates: number
+    errors: number
+    results: MailboxScanResult[]
+  }> {
+    requiredEnv('DATABASE_URL')
+    requiredEnv('OPENROUTER_API_KEY')
+    const results = await withUsageContext({ organizationId: null }, () =>
+      scanAllActiveMailboxes()
+    )
+    const candidates = results.reduce((sum, r) => sum + r.candidates, 0)
+    const errors = results.reduce((sum, r) => sum + r.errors, 0)
+    return {
+      mailboxesScanned: results.length,
+      candidates,
+      errors,
+      results
+    }
   }
 )

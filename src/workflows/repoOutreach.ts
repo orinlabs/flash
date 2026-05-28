@@ -209,7 +209,7 @@ export async function insertDraft(
       error:
         'A pending-review draft already exists for this recipient. Call delete_draft on the existing draft, then draft_email again with your revised copy.',
       existingDraftId: existing.id,
-      existingSubject: existing.subject
+      existingSubject: existing.subject ?? '(no subject)'
     }
   }
 
@@ -226,12 +226,13 @@ export async function insertDraft(
     if (!parent.ok) return { ok: false, error: parent.error }
     replyToDraftId = parent.draft.id
     gmailThreadId = parent.draft.gmailThreadId
-    subject = normalizeReplySubject(subject, parent.draft.subject)
+    subject = normalizeReplySubject(subject, parent.draft.subject ?? '')
   }
 
   const [row] = await db
     .insert(outreachDrafts)
     .values({
+      channel: 'email',
       companyId: input.companyId,
       organizationId: input.organizationId,
       mailboxId: input.mailboxId,
@@ -625,8 +626,8 @@ export async function markDraftSent(
 
 export type SentDraftEngagement = {
   id: string
-  toEmail: string
-  subject: string
+  toEmail: string | null
+  subject: string | null
   sentAt: Date | null
   openCount: number
   firstOpenedAt: Date | null
@@ -850,9 +851,20 @@ export async function countPendingDraftsByCompany(
     .from(outreachDrafts)
     .where(
       organizationId
-        ? and(eq(outreachDrafts.organizationId, organizationId), eq(outreachDrafts.status, 'pending_review'))
-        : eq(outreachDrafts.status, 'pending_review')
+        ? and(
+            eq(outreachDrafts.organizationId, organizationId),
+            eq(outreachDrafts.status, 'pending_review'),
+            isNotNull(outreachDrafts.companyId)
+          )
+        : and(
+            eq(outreachDrafts.status, 'pending_review'),
+            isNotNull(outreachDrafts.companyId)
+          )
     )
     .groupBy(outreachDrafts.companyId)
-  return new Map(rows.map((r) => [r.companyId, Number(r.count)]))
+  return new Map(
+    rows
+      .filter((r): r is { companyId: string; count: number } => Boolean(r.companyId))
+      .map((r) => [r.companyId, Number(r.count)])
+  )
 }

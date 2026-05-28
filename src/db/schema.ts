@@ -88,6 +88,10 @@ export const mailboxes = pgTable(
     oauthExpiresAt: timestamp('oauth_expires_at', { withTimezone: true }),
     scopes: text('scopes'),
     status: text('status').notNull().default('active'),
+    /** Last time we ran scanMailboxForSentIntros against this mailbox. */
+    lastScannedAt: timestamp('last_scanned_at', { withTimezone: true }),
+    /** Gmail history id at the end of the last scan; used for incremental syncs. */
+    lastScanGmailHistoryId: text('last_scan_gmail_history_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
   },
@@ -128,15 +132,17 @@ export const outreachDrafts = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
-    companyId: uuid('company_id')
-      .notNull()
-      .references(() => companies.id, { onDelete: 'cascade' }),
-    mailboxId: uuid('mailbox_id')
-      .notNull()
-      .references(() => mailboxes.id, { onDelete: 'restrict' }),
+    /** 'email' (Gmail-sent) or 'linkedin' (operator copy-pastes; we just log). */
+    channel: text('channel').notNull().default('email'),
+    companyId: uuid('company_id').references(() => companies.id, {
+      onDelete: 'cascade'
+    }),
+    mailboxId: uuid('mailbox_id').references(() => mailboxes.id, {
+      onDelete: 'restrict'
+    }),
     personId: uuid('person_id').references(() => people.id, { onDelete: 'set null' }),
-    toEmail: text('to_email').notNull(),
-    subject: text('subject').notNull(),
+    toEmail: text('to_email'),
+    subject: text('subject'),
     body: text('body').notNull(),
     bodyHtml: text('body_html'),
     status: text('status').notNull().default('pending_review'),
@@ -162,6 +168,7 @@ export const outreachDrafts = pgTable(
     index('outreach_drafts_company_idx').on(t.companyId),
     index('outreach_drafts_mailbox_idx').on(t.mailboxId),
     index('outreach_drafts_status_idx').on(t.status),
+    index('outreach_drafts_channel_idx').on(t.channel),
     index('outreach_drafts_created_idx').on(t.createdAt),
     uniqueIndex('outreach_drafts_tracking_token_unique')
       .on(t.trackingToken)
@@ -216,6 +223,52 @@ export const outreachThreadMessages = pgTable(
     index('outreach_thread_messages_draft_idx').on(t.draftId),
     index('outreach_thread_messages_company_idx').on(t.companyId),
     index('outreach_thread_messages_received_idx').on(t.receivedAt)
+  ]
+)
+
+/**
+ * Outbound intro emails discovered in a connected mailbox's Sent folder that
+ * were sent OUTSIDE of Flash. The operator triages each one and decides
+ * whether to import it as a real pipeline company + send.
+ */
+export const externalEmailCandidates = pgTable(
+  'external_email_candidates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    mailboxId: uuid('mailbox_id')
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: 'cascade' }),
+    gmailMessageId: text('gmail_message_id').notNull(),
+    gmailThreadId: text('gmail_thread_id'),
+    fromEmail: text('from_email'),
+    toEmail: text('to_email'),
+    subject: text('subject'),
+    bodyPreview: text('body_preview'),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    /** 'cold_intro' | 'follow_up' | 'other' */
+    classification: text('classification').notNull(),
+    confidence: numeric('confidence'),
+    rationale: text('rationale'),
+    /** 'pending' | 'imported' | 'ignored' */
+    status: text('status').notNull().default('pending'),
+    importedDraftId: uuid('imported_draft_id').references(() => outreachDrafts.id, {
+      onDelete: 'set null'
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [
+    uniqueIndex('external_email_candidates_gmail_message_unique').on(
+      t.organizationId,
+      t.gmailMessageId
+    ),
+    index('external_email_candidates_org_idx').on(t.organizationId),
+    index('external_email_candidates_status_idx').on(t.status),
+    index('external_email_candidates_mailbox_idx').on(t.mailboxId),
+    index('external_email_candidates_sent_idx').on(t.sentAt)
   ]
 )
 
@@ -528,6 +581,7 @@ export type Mailbox = typeof mailboxes.$inferSelect
 export type OutreachEvent = typeof outreachEvents.$inferSelect
 export type OutreachDraft = typeof outreachDrafts.$inferSelect
 export type OutreachThreadMessage = typeof outreachThreadMessages.$inferSelect
+export type ExternalEmailCandidate = typeof externalEmailCandidates.$inferSelect
 export type AppUser = typeof appUsers.$inferSelect
 export type AppSession = typeof appSessions.$inferSelect
 export type Organization = typeof organizations.$inferSelect

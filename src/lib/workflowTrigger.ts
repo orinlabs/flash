@@ -47,3 +47,17 @@ export async function startSweepDueAccounts(organizationId?: string): Promise<bo
   )
   return true
 }
+
+/**
+ * Triggers `scanConnectedMailboxes`. Run by a Render Cron Job every ~15
+ * minutes (or manually by the operator via the Inbox UI).
+ */
+export async function startScanConnectedMailboxes(): Promise<boolean> {
+  const client = renderClient()
+  if (!client) return false
+  await client.render.workflows.startTask(
+    `${client.workflowService}/scanConnectedMailboxes`,
+    []
+  )
+  return true
+}

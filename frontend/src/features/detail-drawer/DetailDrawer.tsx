@@ -36,6 +36,7 @@ interface Props {
   onViewPeopleForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
   onSelectCompaniesForCrawl?: (crawlId: string, campaignRunId?: string | null) => void
   onCompanyChanged?: () => void
+  onPersonChanged?: () => void
   onError?: (msg: string) => void
 }
 
@@ -60,6 +61,7 @@ export function DetailDrawer({
   onViewPeopleForCrawl,
   onSelectCompaniesForCrawl,
   onCompanyChanged,
+  onPersonChanged,
   onError
 }: Props) {
   if (!person && !company && !crawl) {
@@ -128,6 +130,7 @@ export function DetailDrawer({
             person={person}
             company={company}
             onSelectCompany={onSelectCompany}
+            onLogged={onPersonChanged}
           />
         ) : null}
 

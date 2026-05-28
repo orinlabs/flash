@@ -1,5 +1,7 @@
 import {
+  Check,
   ChevronRight,
+  Copy,
   ExternalLink,
   Info,
   PanelRightClose,
@@ -52,32 +54,39 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
   const { draft, company, mailbox, person, strategy, sentEmails } = detail
   const isPending = draft.status === 'pending_review'
   const isFailed = draft.status === 'failed'
+  const isLinkedin = draft.channel === 'linkedin'
 
-  const [toEmail, setToEmail] = useState(draft.toEmail)
-  const [subject, setSubject] = useState(draft.subject)
+  const [toEmail, setToEmail] = useState(draft.toEmail ?? '')
+  const [subject, setSubject] = useState(draft.subject ?? '')
   const [body, setBody] = useState(draft.body)
   const [reviewNotes, setReviewNotes] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
   const [approving, setApproving] = useState(false)
+  const [marking, setMarking] = useState(false)
   const [discarding, setDiscarding] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
   const [saveInstAccount, setSaveInstAccount] = useState(false)
   const [saveInstMailbox, setSaveInstMailbox] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const notesRef = useRef<HTMLTextAreaElement | null>(null)
   const bodyRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
-    setToEmail(draft.toEmail)
-    setSubject(draft.subject)
+    setToEmail(draft.toEmail ?? '')
+    setSubject(draft.subject ?? '')
     setBody(draft.body)
     setReviewNotes('')
     setSaveInstAccount(false)
     setSaveInstMailbox(false)
+    setCopied(false)
   }, [draft.id, draft.toEmail, draft.subject, draft.body])
 
-  const dirty =
-    toEmail !== draft.toEmail || subject !== draft.subject || body !== draft.body
+  const dirty = isLinkedin
+    ? body !== draft.body
+    : toEmail !== (draft.toEmail ?? '') ||
+      subject !== (draft.subject ?? '') ||
+      body !== draft.body
 
   const fromHeader = mailbox?.email
     ? formatFromHeader(mailbox.email, mailbox.displayName)
@@ -88,7 +97,12 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
     setSavingEdit(true)
     onError(null)
     try {
-      await apiPatch('/drafts/' + draft.id, { toEmail, subject, body })
+      const patch: Record<string, string> = { body }
+      if (!isLinkedin) {
+        patch.toEmail = toEmail
+        patch.subject = subject
+      }
+      await apiPatch('/drafts/' + draft.id, patch)
       onChanged()
       return true
     } catch (err) {
@@ -101,6 +115,7 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
 
   async function approve() {
     if (!isPending && !isFailed) return
+    if (isLinkedin) return
     if (dirty) {
       const saved = await saveEdits()
       if (!saved) return
@@ -114,6 +129,34 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
       onError(err instanceof Error ? err.message : 'Send failed')
     } finally {
       setApproving(false)
+    }
+  }
+
+  async function markSent() {
+    if (!isPending || !isLinkedin) return
+    if (dirty) {
+      const saved = await saveEdits()
+      if (!saved) return
+    }
+    setMarking(true)
+    onError(null)
+    try {
+      await apiPost('/drafts/' + draft.id + '/mark-sent', {})
+      onChanged()
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Mark sent failed')
+    } finally {
+      setMarking(false)
+    }
+  }
+
+  async function copyBody() {
+    try {
+      await navigator.clipboard.writeText(body)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Copy failed')
     }
   }
 
@@ -174,12 +217,18 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
   useImperativeHandle(
     ref,
     () => ({
-      approve,
+      approve: async () => {
+        if (isLinkedin) {
+          await markSent()
+        } else {
+          await approve()
+        }
+      },
       discard,
       focusRegenerate: () => notesRef.current?.focus()
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [approve, discard]
+    [approve, discard, markSent, isLinkedin]
   )
 
   function appendQuickNote(text: string) {
@@ -202,6 +251,12 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
   const personLine = person?.fullName
     ? person.fullName + (person.title ? ' · ' + person.title : '')
     : null
+  const headerSubtitle = isLinkedin
+    ? (personLine ?? person?.linkedinUrl ?? '(no LinkedIn URL)') +
+      (statusLabel ? ' · drafted ' + statusLabel : '')
+    : (personLine ? personLine + ' · ' : '') +
+      (draft.toEmail ?? '(no recipient)') +
+      (statusLabel ? ' · drafted ' + statusLabel : '')
 
   return (
     <div className="flex h-full min-w-0">
@@ -211,11 +266,17 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
           <div className="flex items-start justify-between gap-3 px-5 py-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
+                <Badge
+                  variant={isLinkedin ? 'accent' : 'soft'}
+                  className="h-5 shrink-0 px-1.5 text-2xs uppercase tracking-wide"
+                >
+                  {isLinkedin ? 'LinkedIn' : 'Email'}
+                </Badge>
                 <span className="truncate text-sm font-semibold text-ink">
-                  {company?.name ?? '(unknown company)'}
+                  {company?.name ?? (isLinkedin ? person?.fullName ?? 'LinkedIn message' : '(unknown company)')}
                 </span>
                 <StatusDot status={draft.status} size="sm" />
-                {draft.gmailMessageId ? (
+                {!isLinkedin && draft.gmailMessageId ? (
                   <a
                     href={'https://mail.google.com/mail/u/0/#sent/' + draft.gmailMessageId}
                     target="_blank"
@@ -225,12 +286,18 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
                     Open in Gmail <ExternalLink className="size-3" />
                   </a>
                 ) : null}
+                {isLinkedin && person?.linkedinUrl ? (
+                  <a
+                    href={person.linkedinUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-2xs text-ink-muted underline-offset-4 hover:text-accent hover:underline"
+                  >
+                    Open in LinkedIn <ExternalLink className="size-3" />
+                  </a>
+                ) : null}
               </div>
-              <div className="mt-0.5 truncate text-xs text-ink-muted">
-                {personLine ? personLine + ' · ' : ''}
-                {draft.toEmail}
-                {statusLabel ? ' · drafted ' + statusLabel : ''}
-              </div>
+              <div className="mt-0.5 truncate text-xs text-ink-muted">{headerSubtitle}</div>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
@@ -245,32 +312,57 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
                   >
                     Discard
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="md"
-                    iconLeft={RefreshCw}
-                    loading={regenerating}
-                    onClick={regenerate}
-                    disabled={!reviewNotes.trim()}
-                    title={
-                      reviewNotes.trim()
-                        ? 'Regenerate using your notes'
-                        : 'Add notes below first'
-                    }
-                  >
-                    Regenerate
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="md"
-                    iconLeft={Send}
-                    loading={approving || savingEdit}
-                    onClick={approve}
-                  >
-                    {dirty ? 'Save & send' : 'Approve & send'}
-                  </Button>
+                  {!isLinkedin ? (
+                    <Button
+                      variant="outline"
+                      size="md"
+                      iconLeft={RefreshCw}
+                      loading={regenerating}
+                      onClick={regenerate}
+                      disabled={!reviewNotes.trim()}
+                      title={
+                        reviewNotes.trim()
+                          ? 'Regenerate using your notes'
+                          : 'Add notes below first'
+                      }
+                    >
+                      Regenerate
+                    </Button>
+                  ) : null}
+                  {isLinkedin ? (
+                    <Button
+                      variant="outline"
+                      size="md"
+                      iconLeft={copied ? Check : Copy}
+                      onClick={copyBody}
+                      title="Copy the message body to paste into LinkedIn"
+                    >
+                      {copied ? 'Copied' : 'Copy body'}
+                    </Button>
+                  ) : null}
+                  {isLinkedin ? (
+                    <Button
+                      variant="primary"
+                      size="md"
+                      iconLeft={Check}
+                      loading={marking || savingEdit}
+                      onClick={markSent}
+                    >
+                      Mark as sent
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      size="md"
+                      iconLeft={Send}
+                      loading={approving || savingEdit}
+                      onClick={approve}
+                    >
+                      {dirty ? 'Save & send' : 'Approve & send'}
+                    </Button>
+                  )}
                 </>
-              ) : isFailed ? (
+              ) : isFailed && !isLinkedin ? (
                 <Button
                   variant="primary"
                   size="md"
@@ -298,11 +390,13 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
               <span className="inline-flex items-center gap-1">
                 <Kbd>⌘</Kbd>
                 <Kbd>↵</Kbd>
-                <span>send</span>
+                <span>{isLinkedin ? 'mark sent' : 'send'}</span>
               </span>
-              <span className="inline-flex items-center gap-1">
-                <Kbd>R</Kbd> <span>regenerate</span>
-              </span>
+              {!isLinkedin ? (
+                <span className="inline-flex items-center gap-1">
+                  <Kbd>R</Kbd> <span>regenerate</span>
+                </span>
+              ) : null}
               <span className="inline-flex items-center gap-1">
                 <Kbd>D</Kbd> <span>discard</span>
               </span>
@@ -315,7 +409,8 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
               {dirty ? (
                 <span className="ml-auto inline-flex items-center gap-1 text-accent">
                   <span className="size-1.5 rounded-full bg-accent" />
-                  Unsaved edits — will save on send
+                  Unsaved edits — will save on{' '}
+                  {isLinkedin ? 'mark sent' : 'send'}
                 </span>
               ) : null}
             </div>
@@ -338,7 +433,7 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
               </section>
             ) : null}
 
-            {/* The email — unified inline-editable canvas */}
+            {/* The message — unified inline-editable canvas */}
             <section
               className={cn(
                 'overflow-hidden rounded-lg border bg-surface shadow-sm',
@@ -348,33 +443,48 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
               <div className="border-b border-line/70 bg-surface-muted/40 px-4 py-2">
                 <div className="flex items-center justify-between gap-2 text-2xs text-ink-faint">
                   <span className="font-medium uppercase tracking-wide">
-                    Outgoing email
+                    {isLinkedin ? 'LinkedIn message' : 'Outgoing email'}
                   </span>
                   <span>
                     {isPending
-                      ? 'Edit any field — the recipient sees exactly this.'
+                      ? isLinkedin
+                        ? 'Edit the body — operator sends from LinkedIn, Flash just logs it.'
+                        : 'Edit any field — the recipient sees exactly this.'
                       : 'Read-only — this draft is ' + draft.status.replace(/_/g, ' ') + '.'}
                   </span>
                 </div>
               </div>
 
-              <HeaderRow label="From" value={fromHeader} />
-              <HeaderEditableRow
-                label="To"
-                value={toEmail}
-                onChange={setToEmail}
-                disabled={!isPending}
-                placeholder="recipient@example.com"
-                type="email"
-              />
-              <HeaderEditableRow
-                label="Subject"
-                value={subject}
-                onChange={setSubject}
-                disabled={!isPending}
-                placeholder="Subject line"
-                emphasized
-              />
+              {isLinkedin ? (
+                <HeaderRow
+                  label="To"
+                  value={
+                    person?.fullName ??
+                    person?.linkedinUrl ??
+                    '(no recipient on file)'
+                  }
+                />
+              ) : (
+                <>
+                  <HeaderRow label="From" value={fromHeader} />
+                  <HeaderEditableRow
+                    label="To"
+                    value={toEmail}
+                    onChange={setToEmail}
+                    disabled={!isPending}
+                    placeholder="recipient@example.com"
+                    type="email"
+                  />
+                  <HeaderEditableRow
+                    label="Subject"
+                    value={subject}
+                    onChange={setSubject}
+                    disabled={!isPending}
+                    placeholder="Subject line"
+                    emphasized
+                  />
+                </>
+              )}
 
               <div className="px-4 py-4">
                 <Textarea
@@ -386,10 +496,10 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
                     'min-h-[260px] resize-y border-0 bg-transparent px-0 py-0 text-[14px] leading-[22px] text-ink shadow-none',
                     'focus-visible:ring-0 disabled:opacity-100'
                   )}
-                  placeholder="Email body…"
+                  placeholder={isLinkedin ? 'LinkedIn message body…' : 'Email body…'}
                 />
 
-                {mailbox?.signature?.trim() ? (
+                {!isLinkedin && mailbox?.signature?.trim() ? (
                   <div className="mt-4 border-t border-dashed border-line/70 pt-3">
                     <div className="mb-1 text-2xs uppercase tracking-wide text-ink-faint">
                       Signature (from mailbox)
@@ -398,12 +508,12 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
                       {mailbox.signature.trim()}
                     </pre>
                   </div>
-                ) : (
+                ) : !isLinkedin ? (
                   <div className="mt-3 inline-flex items-center gap-1.5 text-2xs text-ink-faint">
                     <Info className="size-3" />
                     No mailbox signature configured.
                   </div>
-                )}
+                ) : null}
 
                 <div className="mt-3 flex items-center justify-between text-2xs text-ink-faint">
                   <span>{wordCount} words</span>
@@ -412,8 +522,8 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        setToEmail(draft.toEmail)
-                        setSubject(draft.subject)
+                        setToEmail(draft.toEmail ?? '')
+                        setSubject(draft.subject ?? '')
                         setBody(draft.body)
                       }}
                     >
@@ -436,7 +546,7 @@ export const DraftDetailPanel = forwardRef<DraftDetailPanelHandle, Props>(functi
             ) : null}
 
             {/* Teach the agent */}
-            {isPending ? (
+            {isPending && !isLinkedin ? (
               <section className="rounded-lg border border-line bg-surface">
                 <div className="border-b border-line/70 px-4 py-2">
                   <div className="text-2xs font-medium uppercase tracking-wide text-ink-faint">
@@ -676,15 +786,15 @@ function ContextRail({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-ink">
-                        {email.person?.fullName ?? email.toEmail}
+                        {email.person?.fullName ?? email.toEmail ?? '(no recipient)'}
                       </div>
-                      {email.person?.fullName ? (
+                      {email.person?.fullName && email.toEmail ? (
                         <div className="truncate text-2xs text-ink-muted">
                           {email.toEmail}
                         </div>
                       ) : null}
                       <div className="mt-1 line-clamp-2 text-2xs text-ink-muted">
-                        {email.subject}
+                        {email.subject ?? (email.channel === 'linkedin' ? 'LinkedIn message' : '(no subject)')}
                       </div>
                     </div>
                     <span className="shrink-0 text-2xs text-ink-faint">

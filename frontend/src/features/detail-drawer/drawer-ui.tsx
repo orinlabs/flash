@@ -14,13 +14,24 @@ export function Stat({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-export function SectionCard({ title, children }: { title: string; children: ReactNode }) {
+export function SectionCard({
+  title,
+  children,
+  action
+}: {
+  title: string
+  children: ReactNode
+  action?: ReactNode
+}) {
   return (
     <section className="overflow-hidden rounded-lg border border-line bg-surface">
-      <header className="border-b border-line bg-surface px-4 py-2 text-2xs font-medium uppercase tracking-wide text-ink-faint">
-        {title}
+      <header className="flex items-center justify-between gap-2 border-b border-line bg-surface px-4 py-2">
+        <span className="text-2xs font-medium uppercase tracking-wide text-ink-faint">
+          {title}
+        </span>
+        {action ?? null}
       </header>
-      <div className="px-4 py-2">{children}</div>
+      <div className="px-4 py-3">{children}</div>
     </section>
   )
 }

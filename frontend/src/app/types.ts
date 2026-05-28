@@ -35,3 +35,20 @@ export type AgenticCompanySearchStreamEvent =
       result: { companyId: string; fits: boolean; error?: string }
     }
   | AgenticCompanySearchResponse & { type: 'done' }
+
+export type DraftMessageResultEvent = {
+  personId: string
+  subject: string | null
+  body: string
+  error?: string
+}
+
+export type DraftMessagesStreamEvent =
+  | { type: 'start'; total: number }
+  | { type: 'result'; result: DraftMessageResultEvent }
+  | {
+      type: 'done'
+      generated: number
+      errors: number
+      results: DraftMessageResultEvent[]
+    }

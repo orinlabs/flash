@@ -19,6 +19,7 @@ import { authRoutes, sessionUserFromRequest } from './routes/auth.js'
 import { campaignsRoutes } from './routes/campaigns.js'
 import { companiesRoutes } from './routes/companies.js'
 import { draftsRoutes } from './routes/drafts.js'
+import { inboxCandidatesRoutes } from './routes/inboxCandidates.js'
 import { listsRoutes } from './routes/lists.js'
 import { mailboxesRoutes } from './routes/mailboxes.js'
 import { organizationsRoutes } from './routes/organizations.js'
@@ -96,6 +97,7 @@ app.route('/auth', authRoutes)
 app.route('/campaigns', campaignsRoutes)
 app.route('/companies', companiesRoutes)
 app.route('/drafts', draftsRoutes)
+app.route('/inbox-candidates', inboxCandidatesRoutes)
 app.route('/lists', listsRoutes)
 app.route('/mailboxes', mailboxesRoutes)
 app.route('/organizations', organizationsRoutes)

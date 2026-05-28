@@ -33,6 +33,8 @@ interface Props {
   onCrawlFilterChange: (campaignId: string | null, campaignRunId: string | null) => void
   onClearCrawlFilter: () => void
   onVisibleIdsChange: (ids: string[]) => void
+  selectedPersonIds: Set<string>
+  onSelectedPersonIdsChange: (ids: Set<string>) => void
 }
 
 export function PeoplePage({
@@ -53,7 +55,9 @@ export function PeoplePage({
   onClearAgenticResults,
   onCrawlFilterChange,
   onClearCrawlFilter,
-  onVisibleIdsChange
+  onVisibleIdsChange,
+  selectedPersonIds,
+  onSelectedPersonIdsChange
 }: Props) {
   const [search, setSearch] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -168,6 +172,25 @@ export function PeoplePage({
     onClearCrawlFilter()
   }
 
+  function toggleSelected(id: string) {
+    const next = new Set(selectedPersonIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onSelectedPersonIdsChange(next)
+  }
+
+  function selectAllVisible(check: boolean) {
+    if (!check) {
+      onSelectedPersonIdsChange(new Set())
+      return
+    }
+    onSelectedPersonIdsChange(new Set(serverFilteredRows.map((p) => p.id)))
+  }
+
+  const allVisibleSelected =
+    serverFilteredRows.length > 0 &&
+    serverFilteredRows.every((p) => selectedPersonIds.has(p.id))
+
   const empty =
     trimmedSearch || hasActiveFilters || agenticMatchIds || crawlFilter
       ? {
@@ -190,6 +213,30 @@ export function PeoplePage({
     activeFilterCount > 0 ? 'Clear filters (' + activeFilterCount + ')' : 'Clear filters'
 
   const columns: DataTableColumn<Person>[] = [
+    {
+      id: 'select',
+      header: (
+        <input
+          type="checkbox"
+          aria-label="Select all"
+          checked={allVisibleSelected}
+          onChange={(e) => selectAllVisible(e.target.checked)}
+          onClick={(e) => e.stopPropagation()}
+          className="size-3.5 rounded border-line accent-accent"
+        />
+      ),
+      width: '36px',
+      cell: (p) => (
+        <input
+          type="checkbox"
+          aria-label={'Select ' + (p.fullName ?? 'person')}
+          checked={selectedPersonIds.has(p.id)}
+          onChange={() => toggleSelected(p.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="size-3.5 rounded border-line accent-accent"
+        />
+      )
+    },
     {
       id: 'name',
       header: 'Person',

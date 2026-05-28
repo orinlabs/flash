@@ -1,4 +1,4 @@
-import { Plus, RefreshCw, Sparkles } from 'lucide-react'
+import { PencilLine, Plus, RefreshCw, Sparkles } from 'lucide-react'
 
 import type { Campaign, Company, Mailbox, ProspectList } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,9 @@ type Props = {
   crawlsLoading: boolean
   mailboxes: Mailbox[]
   mailboxesLoading: boolean
+  selectedPersonCount: number
   onOpenAgenticSearch: () => void
+  onOpenDraftMessages: () => void
   onLoadPeople: () => void
   onLoadCompanies: () => void
   onLoadLists: () => void
@@ -39,7 +41,9 @@ export function TabHeaderActions({
   crawlsLoading,
   mailboxes,
   mailboxesLoading,
+  selectedPersonCount,
   onOpenAgenticSearch,
+  onOpenDraftMessages,
   onLoadPeople,
   onLoadCompanies,
   onLoadLists,
@@ -52,6 +56,17 @@ export function TabHeaderActions({
     case 'people':
       return (
         <>
+          <Button
+            variant="outline"
+            size="md"
+            iconLeft={PencilLine}
+            onClick={onOpenDraftMessages}
+            disabled={selectedPersonCount === 0}
+          >
+            {selectedPersonCount > 0
+              ? 'Draft messages (' + selectedPersonCount + ')'
+              : 'Draft messages'}
+          </Button>
           <Button
             variant="outline"
             size="icon"

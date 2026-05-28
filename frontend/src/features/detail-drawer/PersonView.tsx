@@ -1,21 +1,26 @@
-import { ExternalLink } from 'lucide-react'
+import { Check, ExternalLink, MessageSquare } from 'lucide-react'
+import { useState } from 'react'
 
-import type { Company, Person } from '@/api'
+import { apiPost, type Company, type Person } from '@/api'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { DrawerBody, DrawerTabs, DrawerTabsContent, DrawerTabsList, DrawerTabsTrigger } from '@/components/ui/drawer'
 import { StatusDot } from '@/components/ui/status-dot'
+import { Textarea } from '@/components/ui/textarea'
 import { domainFromUrl, formatDate } from '@/lib/format'
 
-import { CompanyFavicon, EmptyTab, ExternalAnchor, KV, SectionCard } from './drawer-ui'
+import { CompanyFavicon, ExternalAnchor, KV, SectionCard } from './drawer-ui'
 
 export function PersonView({
   person,
   company,
-  onSelectCompany
+  onSelectCompany,
+  onLogged
 }: {
   person: Person
   company: Company | null
   onSelectCompany: (id: string) => void
+  onLogged?: () => void
 }) {
   return (
     <DrawerTabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
@@ -102,8 +107,8 @@ export function PersonView({
       </DrawerTabsContent>
 
       <DrawerTabsContent value="activity" className="min-h-0 flex-1 overflow-y-auto">
-        <DrawerBody>
-          <EmptyTab title="No activity yet" description="Outreach history will appear here once campaigns send drafts." />
+        <DrawerBody className="space-y-4">
+          <LogLinkedinSendCard personId={person.id} onLogged={onLogged} />
         </DrawerBody>
       </DrawerTabsContent>
 
@@ -122,5 +127,124 @@ export function PersonView({
         </DrawerBody>
       </DrawerTabsContent>
     </DrawerTabs>
+  )
+}
+
+function todayLocalDate(): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate())
+}
+
+function LogLinkedinSendCard({
+  personId,
+  onLogged
+}: {
+  personId: string
+  onLogged?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [body, setBody] = useState('')
+  const [sentDate, setSentDate] = useState(() => todayLocalDate())
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [savedAt, setSavedAt] = useState<string | null>(null)
+
+  async function submit() {
+    const trimmed = body.trim()
+    if (!trimmed) {
+      setError('Paste the LinkedIn message you sent.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      const sentDateTime = new Date(sentDate + 'T12:00:00')
+      await apiPost('/people/' + personId + '/log-linkedin-message', {
+        body: trimmed,
+        sentAt: sentDateTime.toISOString(),
+        status: 'sent'
+      })
+      setBody('')
+      setOpen(false)
+      setSavedAt(new Date().toLocaleString())
+      onLogged?.()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <SectionCard
+      title="LinkedIn outreach"
+      action={
+        !open ? (
+          <Button
+            variant="outline"
+            size="sm"
+            iconLeft={MessageSquare}
+            onClick={() => setOpen(true)}
+          >
+            Log LinkedIn send
+          </Button>
+        ) : null
+      }
+    >
+      {open ? (
+        <div className="space-y-3">
+          <Textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Paste the LinkedIn message you sent to this person. Flash will add it to your inbox under Drafts (status: sent)."
+            className="min-h-[140px]"
+            autoFocus
+          />
+          <label className="flex items-center gap-2 text-xs text-ink-muted">
+            Sent on
+            <input
+              type="date"
+              value={sentDate}
+              onChange={(e) => setSentDate(e.target.value)}
+              max={todayLocalDate()}
+              className="h-8 rounded-md border border-line bg-surface px-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/25"
+            />
+          </label>
+          {error ? (
+            <div className="rounded-md border border-bad/25 bg-bad/10 px-3 py-2 text-xs text-bad">
+              {error}
+            </div>
+          ) : null}
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setOpen(false)
+                setError(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              iconLeft={Check}
+              loading={saving}
+              onClick={() => void submit()}
+            >
+              Log as sent
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-ink-muted">
+          {savedAt
+            ? 'Logged at ' + savedAt + '. The send appears in the Drafts inbox.'
+            : 'Sent a LinkedIn message outside Flash? Log it here so it shows up in your unified inbox.'}
+        </p>
+      )}
+    </SectionCard>
   )
 }

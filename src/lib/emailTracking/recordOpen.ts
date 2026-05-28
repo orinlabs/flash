@@ -26,7 +26,14 @@ export async function recordEmailOpen(input: RecordOpenInput): Promise<RecordOpe
     .from(outreachDrafts)
     .where(eq(outreachDrafts.trackingToken, token))
     .limit(1)
-  if (!draft || draft.status !== 'sent') {
+  if (
+    !draft ||
+    draft.status !== 'sent' ||
+    draft.channel !== 'email' ||
+    !draft.companyId ||
+    !draft.toEmail ||
+    !draft.subject
+  ) {
     return { recorded: false, reason: 'unknown_token' }
   }
 
